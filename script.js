@@ -1,5 +1,5 @@
 /**
- * نظام أعطال مصنع 5 - الملف البرمجي الرئيسي
+ * نظام أعطال مصنع 5 - الملف البرمجي الرئيسي (محدث لمنع البيانات الفارغة)
  */
 
 const MACHINES = [
@@ -299,7 +299,8 @@ function findAndSelectMachine(query) {
         alert("من فضلك أدخل رقم الماكينة أولاً");
         return;
     }
-    const machine = MACHINES.find(m => m.number === query);
+    const cleanQuery = query.trim();
+    const machine = MACHINES.find(m => m.number === cleanQuery);
     const card = document.getElementById("machine-info-card");
     if (machine) {
         selectedMachine = machine;
@@ -311,7 +312,7 @@ function findAndSelectMachine(query) {
     } else {
         selectedMachine = null;
         card.classList.add("hidden");
-        alert(`رقم الماكينة (${query}) غير موجود في قائمة مصنع 5`);
+        alert(`رقم الماكينة (${cleanQuery}) غير موجود في قائمة مصنع 5`);
     }
 }
 
@@ -410,17 +411,17 @@ function loadFaultsFromStorage() {
     const activeFaults = faults.filter(f => f.status === "active");
 
     const createFaultCardHTML = (fault, isTechMode) => {
-        const startTimeStr = new Date(fault.startTime).toLocaleTimeString("ar-EG");
-        const elapsedSeconds = Math.floor((Date.now() - fault.startTime) / 1000);
+        const startTimeStr = fault.startTime ? new Date(fault.startTime).toLocaleTimeString("ar-EG") : "-";
+        const elapsedSeconds = fault.startTime ? Math.floor((Date.now() - fault.startTime) / 1000) : 0;
         let timeDisplay = elapsedSeconds < 60 ? `${elapsedSeconds} ثانية` : `${Math.floor(elapsedSeconds / 60)} دقيقة و ${elapsedSeconds % 60} ثانية`;
 
         return `
             <div class="fault-card">
-                <div class="fault-card-header">🔴 ماكينة عطلانة: ${fault.machineNumber}</div>
+                <div class="fault-card-header">🔴 ماكينة عطلانة: ${fault.machineNumber || 'غير معروف'}</div>
                 <div class="fault-card-body">
-                    <p><strong>المرحلة:</strong> ${fault.machineStage}</p>
-                    <p><strong>القسم:</strong> ${fault.machineSection} (${fault.machineZone})</p>
-                    <p><strong>العطل:</strong> كود ${fault.faultCode} — ${fault.faultName}</p>
+                    <p><strong>المرحلة:</strong> ${fault.machineStage || '-'}</p>
+                    <p><strong>القسم:</strong> ${fault.machineSection || '-'} (${fault.machineZone || '-'})</p>
+                    <p><strong>العطل:</strong> كود ${fault.faultCode || '-'} — ${fault.faultName || '-'}</p>
                     <p><strong>وقت البداية:</strong> ${startTimeStr}</p>
                     <p><strong>مدة التوقف:</strong> <span class="elapsed-time">${timeDisplay}</span></p>
                     ${fault.notes ? `<p><strong>ملاحظات:</strong> ${fault.notes}</p>` : ""}
@@ -550,11 +551,13 @@ function applyAdvancedSearch() {
     const faults = getStoredFaults();
 
     const filtered = faults.filter(f => {
-        const matchQuery = !query || f.machineNumber.toLowerCase().includes(query) || f.machineStage.toLowerCase().includes(query) || f.faultName.toLowerCase().includes(query) || String(f.faultCode) === query;
+        const matchQuery = !query || (f.machineNumber && f.machineNumber.toLowerCase().includes(query)) || (f.machineStage && f.machineStage.toLowerCase().includes(query)) || (f.faultName && f.faultName.toLowerCase().includes(query)) || String(f.faultCode) === query;
         let matchDate = true;
-        const fDate = new Date(f.startTime).toISOString().split('T')[0];
-        if (dateFrom && fDate < dateFrom) matchDate = false;
-        if (dateTo && fDate > dateTo) matchDate = false;
+        if (f.startTime) {
+            const fDate = new Date(f.startTime).toISOString().split('T')[0];
+            if (dateFrom && fDate < dateFrom) matchDate = false;
+            if (dateTo && fDate > dateTo) matchDate = false;
+        }
         return matchQuery && matchDate;
     });
 
@@ -582,10 +585,10 @@ function applyAdvancedSearch() {
     filtered.forEach(f => {
         const tr = document.createElement("tr");
         tr.innerHTML = `
-            <td>${f.machineNumber} (${f.machineStage})</td>
-            <td>${f.machineSection}</td>
-            <td>كود ${f.faultCode} — ${f.faultName}</td>
-            <td>${new Date(f.startTime).toLocaleString("ar-EG")}</td>
+            <td>${f.machineNumber || '-'} (${f.machineStage || '-'})</td>
+            <td>${f.machineSection || '-'}</td>
+            <td>كود ${f.faultCode || '-'} — ${f.faultName || '-'}</td>
+            <td>${f.startTime ? new Date(f.startTime).toLocaleString("ar-EG") : '-'}</td>
             <td>${f.endTime ? new Date(f.endTime).toLocaleTimeString("ar-EG") : "مفتوح"}</td>
             <td>${f.status === "finished" ? formatDuration(f.durationMinutes) : "-"}</td>
         `;
@@ -594,7 +597,7 @@ function applyAdvancedSearch() {
 }
 
 function updateParetoTable() {
-    const faults = getStoredFaults().filter(f => f.status === "finished");
+    const faults = getStoredFaults().filter(f => f.status === "finished" && f.faultCode);
     const tbody = document.querySelector("#pareto-table tbody");
     if (!tbody) return;
     tbody.innerHTML = "";
@@ -725,14 +728,14 @@ function updateFullLogsTable() {
     faults.forEach(f => {
         const tr = document.createElement("tr");
         tr.innerHTML = `
-            <td>${new Date(f.startTime).toLocaleDateString("ar-EG")}</td>
-            <td>${f.machineZone}</td>
-            <td>${f.machineSection}</td>
-            <td>${f.machineNumber}</td>
-            <td>${f.machineStage}</td>
-            <td>${f.faultCode}</td>
-            <td>${f.faultName}</td>
-            <td>${new Date(f.startTime).toLocaleTimeString("ar-EG")}</td>
+            <td>${f.startTime ? new Date(f.startTime).toLocaleDateString("ar-EG") : '-'}</td>
+            <td>${f.machineZone || '-'}</td>
+            <td>${f.machineSection || '-'}</td>
+            <td>${f.machineNumber || '-'}</td>
+            <td>${f.machineStage || '-'}</td>
+            <td>${f.faultCode || '-'}</td>
+            <td>${f.faultName || '-'}</td>
+            <td>${f.startTime ? new Date(f.startTime).toLocaleTimeString("ar-EG") : '-'}</td>
             <td>${f.endTime ? new Date(f.endTime).toLocaleTimeString("ar-EG") : "مفتوح"}</td>
             <td>${f.status === "finished" ? formatDuration(f.durationMinutes) : "مفتوح"}</td>
             <td>${f.notes || "-"}</td>
@@ -756,9 +759,11 @@ function executePrintReport() {
         if (machineFilter && f.machineNumber !== machineFilter) return false;
         if (faultFilter && String(f.faultCode) !== faultFilter) return false;
         let matchDate = true;
-        const fDate = new Date(f.startTime).toISOString().split('T')[0];
-        if (dateFrom && fDate < dateFrom) matchDate = false;
-        if (dateTo && fDate > dateTo) matchDate = false;
+        if (f.startTime) {
+            const fDate = new Date(f.startTime).toISOString().split('T')[0];
+            if (dateFrom && fDate < dateFrom) matchDate = false;
+            if (dateTo && fDate > dateTo) matchDate = false;
+        }
         return matchDate;
     });
 
@@ -770,13 +775,13 @@ function executePrintReport() {
     filtered.forEach(f => {
         const tr = document.createElement("tr");
         tr.innerHTML = `
-            <td>${new Date(f.startTime).toLocaleDateString("ar-EG")}</td>
-            <td>${f.machineZone}</td>
-            <td>${f.machineSection}</td>
-            <td>${f.machineNumber}</td>
-            <td>${f.machineStage}</td>
-            <td>${f.faultName}</td>
-            <td>${new Date(f.startTime).toLocaleTimeString("ar-EG")}</td>
+            <td>${f.startTime ? new Date(f.startTime).toLocaleDateString("ar-EG") : '-'}</td>
+            <td>${f.machineZone || '-'}</td>
+            <td>${f.machineSection || '-'}</td>
+            <td>${f.machineNumber || '-'}</td>
+            <td>${f.machineStage || '-'}</td>
+            <td>${f.faultName || '-'}</td>
+            <td>${f.startTime ? new Date(f.startTime).toLocaleTimeString("ar-EG") : '-'}</td>
             <td>${f.endTime ? new Date(f.endTime).toLocaleTimeString("ar-EG") : "مفتوح"}</td>
             <td>${f.status === "finished" ? formatDuration(f.durationMinutes) : "مفتوح"}</td>
         `;
