@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>نظام متابعة أعطال مصنع 5 - شركة ACROW مصر</title>
+    <link rel="stylesheet" href="style.css">
+    <!-- مكتبة قراءة باركود QR -->
+    <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
+    <!-- مكتبة الرسوم البيانية Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+
+    <!-- الهيدر العلوي -->
+    <header class="app-header">
+        <div class="header-content">
+            <h1>🏭 نظام متابعة أعطال مصنع 5</h1>
+            <div class="header-controls">
+                <span id="live-clock" class="live-clock">--:--:--</span>
+                <button id="admin-login-btn" class="btn btn-outline" style="background-color: #fff; color: #1e293b; font-weight: bold;">🔐 لوحة الإدارة</button>
+            </div>
+        </div>
+    </header>
+
+    <main class="container">
+        
+        <!-- أزرار تبديل الواجهات (عمال / فنيين) -->
+        <div class="view-mode-switcher" style="margin-bottom: 20px;">
+            <button id="switch-worker-view" class="btn btn-primary active-mode-btn">👷 واجهة تسجيل العمال</button>
+            <button id="switch-tech-view" class="btn btn-outline">🛠️ واجهة شاشات الفنيين</button>
+        </div>
+
+        <!-- ================= واجهة تسجيل العمال (الوضع الافتراضي) ================= -->
+        <section id="fault-registration-section">
+            <div class="card" style="background: #ffffff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                <h2 style="color: #1e293b; margin-bottom: 15px;">تسجيل عطل جديد</h2>
+                
+                <!-- خطوة 1: تحديد الماكينة -->
+                <div class="form-group" style="margin-bottom: 15px;">
+                    <label for="machine-search-input" style="display: block; margin-bottom: 5px; color: #334155; font-weight: bold;">رقم الماكينة:</label>
+                    <div class="search-inline" style="display: flex; gap: 10px;">
+                        <input type="text" id="machine-search-input" class="form-control" placeholder="أدخل رقم الماكينة (مثال: 1712)" style="flex: 1; padding: 8px; border: 1px solid #cbd5e1; border-radius: 4px;">
+                        <button id="search-machine-btn" class="btn btn-secondary" style="padding: 8px 15px;">بحث</button>
+                        <button id="scan-qr-btn" class="btn btn-info" style="padding: 8px 15px;">📷 مسح QR</button>
+                    </div>
+                </div>
+
+                <!-- قارئ الباركود -->
+                <div id="scanner-container" style="display: none; margin-bottom: 15px;">
+                    <div id="reader" style="width: 100%; max-width: 400px; margin: 0 auto;"></div>
+                    <button id="close-scanner-btn" class="btn btn-danger" style="margin-top: 10px; width: 100%;">إغلاق الكاميرا</button>
+                </div>
+
+                <!-- كارد معلومات الماكينة المحددة -->
+                <div id="machine-info-card" class="info-card hidden" style="background: #f8fafc; padding: 10px; border-radius: 6px; margin-bottom: 15px; border: 1px solid #e2e8f0;">
+                    <p style="margin: 5px 0; color: #334155;"><strong>المنطقة:</strong> <span id="info-zone">-</span></p>
+                    <p style="margin: 5px 0; color: #334155;"><strong>القسم:</strong> <span id="info-section">-</span></p>
+                    <p style="margin: 5px 0; color: #334155;"><strong>رقم الماكينة:</strong> <span id="info-number">-</span></p>
+                    <p style="margin: 5px 0; color: #334155;"><strong>المرحلة:</strong> <span id="info-stage">-</span></p>
+                </div>
+
+                <!-- خطوة 2: اختيار نوع العطل -->
+                <div class="form-group" style="margin-bottom: 15px;">
+                    <label for="fault-select" style="display: block; margin-bottom: 5px; color: #334155; font-weight: bold;">نوع العطل (الـ 17 كود):</label>
+                    <select id="fault-select" class="form-control" style="width: 100%; padding: 8px; border: 1px solid #cbd5e1; border-radius: 4px;">
+                        <option value="">-- اختر العطل من القائمة الرسمية --</option>
+                    </select>
+                </div>
+
+                <!-- خطوة 3: ملاحظات إضافية -->
+                <div class="form-group" style="margin-bottom: 15px;">
+                    <label for="fault-notes" style="display: block; margin-bottom: 5px; color: #334155; font-weight: bold;">ملاحظات إضافية (اختياري):</label>
+                    <textarea id="fault-notes" class="form-control" placeholder="اكتب أي تفاصيل إضافية هنا..." style="width: 100%; padding: 8px; border: 1px solid #cbd5e1; border-radius: 4px; height: 80px;"></textarea>
+                </div>
+
+                <button id="start-fault-btn" class="btn btn-success btn-block" style="width: 100%; padding: 10px; font-weight: bold;">🚀 تسجيل وبدء وقت التوقف</button>
+            </div>
+        </section>
+
+        <!-- ================= واجهة شاشات الفنيين المستقلة (تظهر للفنيين فقط) ================= -->
+        <section id="tech-dashboard-section" class="hidden">
+            <h2 style="text-align: center; color: #1e293b; margin-bottom: 10px;">🛠️ شاشة الأعطال الفنية والصيانة المستقلة</h2>
+            <p style="text-align: center; color: #475569; margin-bottom: 20px; font-weight: 500;">الأعطال الإدارية والتشغيلية (مثل انقطاع الكهرباء والأكواد الإدارية) مسجلة لدى العمال ولا تظهر هنا.</p>
+            
+            <!-- شبكة الشاشات المستقلة للأعطال الفنية -->
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 15px;">
+                
+                <!-- 1. شاشة صيانة الكهرباء -->
+                <div style="background: #fff; padding: 15px; border-radius: 8px; border-top: 5px solid #eab308; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                    <h3 style="margin-top:0; color: #ca8a04; border-bottom: 1px solid #eee; padding-bottom: 10px;">⚡ صيانة الكهرباء (كود 5)</h3>
+                    <div id="tech-cat-electricity"></div>
+                </div>
+
+                <!-- 2. شاشة صيانة الماكينات -->
+                <div style="background: #fff; padding: 15px; border-radius: 8px; border-top: 5px solid #3b82f6; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                    <h3 style="margin-top:0; color: #2563eb; border-bottom: 1px solid #eee; padding-bottom: 10px;">⚙️ صيانة الماكينات (كود 1، 2)</h3>
+                    <div id="tech-cat-machines"></div>
+                </div>
+
+                <!-- 3. شاشة الميكانيكا والاسطمبات والهواء -->
+                <div style="background: #fff; padding: 15px; border-radius: 8px; border-top: 5px solid #ef4444; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                    <h3 style="margin-top:0; color: #dc2626; border-bottom: 1px solid #eee; padding-bottom: 10px;">🔧 ميكانيكا واطمبات (كود 4، 6، 13)</h3>
+                    <div id="tech-cat-mechanics"></div>
+                </div>
+
+                <!-- 4. شاشة الخدمات الهندسية والأمن والصيانة المساعدة -->
+                <div style="background: #fff; padding: 15px; border-radius: 8px; border-top: 5px solid #10b981; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                    <h3 style="margin-top:0; color: #059669; border-bottom: 1px solid #eee; padding-bottom: 10px;">🏗️ أمن وأوناش (كود 10، 12، 16)</h3>
+                    <div id="tech-cat-services"></div>
+                </div>
+
+            </div>
+        </section>
+
+        <!-- ================= قائمة الأعطال المفتوحة الحالية (تظهر في واجهة العمال) ================= -->
+        <section id="worker-active-faults-section" style="margin-top: 30px;">
+            <h2 style="color: #1e293b; margin-bottom: 15px;">الأعطال المفتوحة حالياً</h2>
+            <div id="active-faults-container" class="faults-grid">
+                <!-- سيتم تعبئتها ديناميكياً -->
+            </div>
+        </section>
+
+        <!-- ================= لوحة الإدارة والتقارير (تظهر بكلمة سر) ================= -->
+        <div id="admin-panel" class="admin-panel hidden" style="background: #f8fafc; padding: 20px; border-radius: 8px; border: 2px solid #cbd5e1; margin-top: 20px;">
+            <div class="admin-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; border-bottom: 2px solid #e2e8f0; padding-bottom: 10px;">
+                <h2 style="color: #1e293b; margin: 0;">📊 لوحة تحكم الإدارة والتقارير</h2>
+                
+                <div style="display: flex; gap: 10px;">
+                    <!-- زر العودة للتبويبات الرئيسية داخل لوحة الإدارة (تم التعديل لإضافة onclick المباشر) -->
+                    <button id="back-to-admin-main-btn" class="btn btn-secondary" onclick="if(typeof switchAdminTab === 'function') switchAdminTab('tab-indicators');" style="background-color: #475569; color: white; padding: 8px 16px; font-weight: bold; border-radius: 4px;">🔙 العودة للوحة الإدارة</button>
+                    <!-- زر الخروج النهائي للرئيسية -->
+                    <button id="logout-admin-btn" class="btn btn-danger" style="background-color: #dc2626; color: white; padding: 8px 16px; font-weight: bold; border-radius: 4px;">🚪 الخروج للرئيسية</button>
+                </div>
+            </div>
+
+            <!-- تبويبات الإدارة -->
+            <div class="admin-tabs" style="display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 15px;">
+                <button class="tab-btn active" data-tab="tab-indicators" style="padding: 8px 12px; cursor: pointer;">مؤشرات الأداء</button>
+                <button class="tab-btn" data-tab="tab-machines" style="padding: 8px 12px; cursor: pointer;">أداء الماكينات</button>
+                <button class="tab-btn" data-tab="tab-pareto" style="padding: 8px 12px; cursor: pointer;">تحليل Pareto</button>
+                <button class="tab-btn" data-tab="tab-search" style="padding: 8px 12px; cursor: pointer;">بحث متقدم</button>
+                <button class="tab-btn" data-tab="tab-reports" style="padding: 8px 12px; cursor: pointer;">تقارير الطباعة</button>
+                <button class="tab-btn" data-tab="tab-logs" style="padding: 8px 12px; cursor: pointer;">سجل الأعطال الكامل</button>
+            </div>
+
+            <!-- 1. مؤشرات الأداء الكلية -->
+            <div id="tab-indicators" class="tab-pane active">
+                <h3 style="color: #334155; margin-bottom: 10px;">مؤشرات الأداء العامة لمصنع 5</h3>
+                <div class="kpi-grid">
+                    <div class="kpi-card">
+                        <h4>إجمالي الأعطال المسجلة</h4>
+                        <p id="kpi-total">0</p>
+                    </div>
+                    <div class="kpi-card">
+                        <h4>الأعطال المفتوحة حالياً</h4>
+                        <p id="kpi-active">0</p>
+                    </div>
+                    <div class="kpi-card">
+                        <h4>الأعطال التي تم إصلاحها</h4>
+                        <p id="kpi-finished">0</p>
+                    </div>
+                    <div class="kpi-card">
+                        <h4>إجمالي وقت التوقف</h4>
+                        <p id="kpi-total-time">0 دقيقة</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 2. أداء الماكينات (داخل لوحة الإدارة فقط) -->
+            <div id="tab-machines" class="tab-pane">
+                <h3 style="color: #334155; margin-bottom: 10px;">تقرير أداء ومعدلات أعطال الماكينات</h3>
+                <div class="table-responsive">
+                    <table id="machines-performance-table" class="data-table">
+                        <thead>
+                            <tr>
+                                <th>رقم الماكينة</th>
+                                <th>المرحلة</th>
+                                <th>المنطقة</th>
+                                <th>القسم</th>
+                                <th>عدد الأعطال</th>
+                                <th>إجمالي وقت التوقف</th>
+                                <th>متوسط وقت الإصلاح</th>
+                                <th>أقصى وقت توقف</th>
+                                <th>نسبة التعطل</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- 3. تحليل Pareto (داخل لوحة الإدارة فقط) -->
+            <div id="tab-pareto" class="tab-pane">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                    <h3 style="color: #334155; margin: 0;">تحليل بيريتو (Pareto Analysis) للأعطال الأكثر تأثيراً</h3>
+                    <div>
+                        <button id="print-chart-only-btn" class="btn btn-secondary">🖨️ طباعة الرسم البياني فقط</button>
+                        <button id="print-pareto-btn" class="btn btn-primary">🖨️ طباعة التقرير بالكامل</button>
+                    </div>
+                </div>
+                <div id="pareto-chart-card" class="card" style="margin-bottom: 20px; height: 400px;">
+                    <canvas id="pareto-canvas"></canvas>
+                </div>
+                <div class="table-responsive">
+                    <table id="pareto-table" class="data-table">
+                        <thead>
+                            <tr>
+                                <th>كود العطل</th>
+                                <th>اسم العطل</th>
+                                <th>تكرار العطل</th>
+                                <th>نسبة التكرار (%)</th>
+                                <th>إجمالي مدة التوقف</th>
+                                <th>نسبة الوقت (%)</th>
+                                <th>النسبة التراكمية (%)</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- 4. البحث المتقدم -->
+            <div id="tab-search" class="tab-pane">
+                <h3 style="color: #334155; margin-bottom: 10px;">البحث المتقدم في الأعطال</h3>
+                <div class="search-filters-grid">
+                    <div class="form-group">
+                        <label>بحث برقم الماكينة أو الكود:</label>
+                        <input type="text" id="adv-search-query" class="form-control" placeholder="أدخل رقم ماكينة أو كود عطل">
+                    </div>
+                    <div class="form-group">
+                        <label>من تاريخ:</label>
+                        <input type="date" id="date-from" class="form-control">
+                    </div>
+                    <div class="form-group">
+                        <label>إلى تاريخ:</label>
+                        <input type="date" id="date-to" class="form-control">
+                    </div>
+                    <div class="form-group" style="display: flex; align-items: flex-end;">
+                        <button id="apply-adv-search" class="btn btn-primary btn-block">بحث وتصفية</button>
+                    </div>
+                </div>
+
+                <div id="search-results-summary" class="hidden" style="margin-top: 20px;">
+                    <div class="kpi-grid" style="grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); margin-bottom: 15px;">
+                        <div class="kpi-card"><h5>النتائج المطابقة</h5><p id="res-count">0</p></div>
+                        <div class="kpi-card"><h5>تم إصلاحها</h5><p id="res-finished">0</p></div>
+                        <div class="kpi-card"><h5>مفتوحة حالياً</h5><p id="res-active">0</p></div>
+                        <div class="kpi-card"><h5>إجمالي الوقت</h5><p id="res-total-duration">0</p></div>
+                        <div class="kpi-card"><h5>متوسط الوقت</h5><p id="res-avg-duration">0</p></div>
+                        <div class="kpi-card"><h5>أقصى وقت</h5><p id="res-max-duration">0</p></div>
+                    </div>
+                    <div class="table-responsive">
+                        <table id="adv-search-table" class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>الماكينة</th>
+                                    <th>القسم</th>
+                                    <th>العطل</th>
+                                    <th>وقت البداية</th>
+                                    <th>وقت النهاية</th>
+                                    <th>المدة</th>
+                                </tr>
+                            </thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 5. التقارير والطباعة المخصصة -->
+            <div id="tab-reports" class="tab-pane">
+                <h3 style="color: #334155; margin-bottom: 10px;">إعداد وتصدير التقارير للطباعة</h3>
+                <div class="search-filters-grid">
+                    <div class="form-group">
+                        <label>نوع التقرير:</label>
+                        <select id="report-type" class="form-control">
+                            <option value="all">جميع الأعطال</option>
+                            <option value="finished">الأعطال التي تم إصلاحها فقط</option>
+                            <option value="active">الأعطال المفتوحة حالياً</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>تصفية برقم ماكينة معين (اختياري):</label>
+                        <input type="text" id="report-machine-filter" class="form-control" placeholder="مثال: 1712">
+                    </div>
+                    <div class="form-group">
+                        <label>تصفية برقم كود عطل (اختياري):</label>
+                        <input type="number" id="report-fault-filter" class="form-control" placeholder="مثال: 5">
+                    </div>
+                    <div class="form-group">
+                        <label>من تاريخ:</label>
+                        <input type="date" id="report-date-from" class="form-control">
+                    </div>
+                    <div class="form-group">
+                        <label>إلى تاريخ:</label>
+                        <input type="date" id="report-date-to" class="form-control">
+                    </div>
+                    <div class="form-group" style="display: flex; align-items: flex-end;">
+                        <button id="print-report-btn" class="btn btn-success btn-block">🖨️ طباعة التقرير المخصص</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 6. سجل الأعطال الكامل -->
+            <div id="tab-logs" class="tab-pane">
+                <h3>سجل الأعطال الكامل (تحكم وحذف)</h3>
+                <div class="table-responsive">
+                    <table id="full-logs-table" class="data-table">
+                        <thead>
+                            <tr>
+                                <th>التاريخ</th>
+                                <th>المنطقة</th>
+                                <th>القسم</th>
+                                <th>الماكينة</th>
+                                <th>المرحلة</th>
+                                <th>الكود</th>
+                                <th>اسم العطل</th>
+                                <th>البداية</th>
+                                <th>النهاية</th>
+                                <th>المدة</th>
+                                <th>ملاحظات</th>
+                                <th>إجراءات</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+
+        </div>
+
+    </main>
+
+    <!-- نافذة تسجيل الدخول للإدارة -->
+    <div id="login-modal" class="modal hidden">
+        <div class="modal-content">
+            <h3>تسجيل دخول الإدارة</h3>
+            <p>أدخل كلمة المرور الخاصة بلوحة التحكم:</p>
+            <input type="password" id="admin-password-input" class="form-control" placeholder="كلمة المرور">
+            <p id="login-error-msg" class="error-text hidden">كلمة المرور غير صحيحة!</p>
+            <div class="modal-actions" style="margin-top: 15px; display: flex; gap: 10px;">
+                <button id="submit-login-btn" class="btn btn-primary" style="flex: 1;">دخول</button>
+                <button id="close-login-btn" class="btn btn-outline" style="flex: 1;">إلغاء</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- نموذج الطباعة الخفي للتقارير -->
+    <div id="printable-report-area" class="printable-area">
+        <div class="print-header">
+            <h2>شركة ACROW مصر - مصنع 5</h2>
+            <h3>تقرير متابعة أعطال وصيانة الماكينات</h3>
+            <p id="print-meta-info"></p>
+        </div>
+        <div id="print-summary-box" style="margin-bottom: 15px; font-size: 14px;"></div>
+        <table id="print-table-element" class="data-table" style="width: 100%; border-collapse: collapse;">
+            <thead>
+                <tr>
+                    <th>التاريخ</th>
+                    <th>المنطقة</th>
+                    <th>القسم</th>
+                    <th>الماكينة</th>
+                    <th>المرحلة</th>
+                    <th>العطل</th>
+                    <th>البداية</th>
+                    <th>النهاية</th>
+                    <th>المدة</th>
+                </tr>
+            </thead>
+            <tbody></tbody>
+        </table>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
