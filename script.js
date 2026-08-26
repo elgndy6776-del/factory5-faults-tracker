@@ -228,7 +228,6 @@ function setupEventListeners() {
         });
     }
 
-    // تفعيل زر العودة للوحة التحكم / المؤشرات بجميع أشكاله (الكلاس أو الـ ID)
     const backToIndicatorsBtns = document.querySelectorAll(".back-to-indicators-btn, #back-to-indicators, [data-target='tab-indicators']");
     backToIndicatorsBtns.forEach(btn => {
         btn.addEventListener("click", (e) => {
@@ -330,9 +329,13 @@ function startScanner() {
         { facingMode: "environment" },
         { fps: 10, qrbox: { width: 250, height: 250 } },
         (decodedText) => {
-            document.getElementById("machine-search-input").value = decodedText;
+            const scannedNumber = decodedText.trim();
+            const searchInput = document.getElementById("machine-search-input");
+            if (searchInput) {
+                searchInput.value = scannedNumber;
+            }
             stopScanner();
-            findAndSelectMachine(decodedText);
+            findAndSelectMachine(scannedNumber);
         },
         () => {}
     ).catch(() => {
