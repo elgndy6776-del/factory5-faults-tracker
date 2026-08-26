@@ -1,5 +1,5 @@
 /**
- * نظام أعطال مصنع 5 - الملف البرمجي الرئيسي (محدث لمنع البيانات الفارغة)
+ * نظام أعطال مصنع 5 - الملف البرمجي الرئيسي (النسخة الكاملة النهائية - محسنة للموبايل)
  */
 
 const MACHINES = [
@@ -320,15 +320,40 @@ function startScanner() {
     const container = document.getElementById("scanner-container");
     if (!container) return;
     container.style.display = "block";
+
     if (typeof Html5Qrcode === "undefined") {
         alert("مكتبة قراءة الباركود غير متوفرة.");
         container.style.display = "none";
         return;
     }
+
+    if (html5QrCode) {
+        html5QrCode.stop().catch(() => {}).then(() => {
+            initCameraScanner(container);
+        });
+    } else {
+        initCameraScanner(container);
+    }
+}
+
+function initCameraScanner(container) {
     html5QrCode = new Html5Qrcode("reader");
+
+    const qrboxFunction = function(viewfinderWidth, viewfinderHeight) {
+        const minEdge = Math.min(viewfinderWidth, viewfinderHeight);
+        const qrboxSize = Math.floor(minEdge * 0.75);
+        return { width: qrboxSize, height: qrboxSize };
+    };
+
+    const config = {
+        fps: 15,
+        qrbox: qrboxFunction,
+        aspectRatio: 1.0
+    };
+
     html5QrCode.start(
         { facingMode: "environment" },
-        { fps: 10, qrbox: { width: 250, height: 250 } },
+        config,
         (decodedText) => {
             const scannedNumber = decodedText.trim();
             const searchInput = document.getElementById("machine-search-input");
@@ -339,8 +364,9 @@ function startScanner() {
             findAndSelectMachine(scannedNumber);
         },
         () => {}
-    ).catch(() => {
-        alert("تعذر فتح الكاميرا.");
+    ).catch(err => {
+        console.error("Camera start error:", err);
+        alert("تعذر فتح الكاميرا. يرجى التأكد من إعطاء صلاحية الكاميرا للمتصفح.");
         container.style.display = "none";
     });
 }
@@ -349,7 +375,11 @@ function stopScanner() {
     const container = document.getElementById("scanner-container");
     if (!container) return;
     if (html5QrCode && html5QrCode.isScanning) {
-        html5QrCode.stop().then(() => { container.style.display = "none"; }).catch(() => { container.style.display = "none"; });
+        html5QrCode.stop().then(() => { 
+            container.style.display = "none"; 
+        }).catch(() => { 
+            container.style.display = "none"; 
+        });
     } else {
         container.style.display = "none";
     }
