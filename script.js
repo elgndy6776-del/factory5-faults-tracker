@@ -1,6 +1,16 @@
 /**
- * نظام أعطال مصنع 5 - الملف البرمجي الرئيسي (النسخة الكاملة النهائية - محسنة للموبايل)
+ * نظام أعطال مصنع 5 - الملف البرمجي الرئيسي (النسخة الكاملة النهائية - محسنة للموبايل ومعدلة للربط السحابي Firebase Realtime Database)
  */
+
+// إعدادات الاتصال بـ Firebase Realtime Database
+// (تأكد من مطابقة هذه البيانات لبروجكت الخاص بك على فايبربيس)
+const firebaseConfig = {
+    databaseURL: "https://factory5-faults-default-rtdb.firebaseio.com/"
+};
+
+// تهيئة Firebase
+firebase.initializeApp(firebaseConfig);
+const rtdb = firebase.database();
 
 const MACHINES = [
     { number: "1712", zone: "منطقة 1", section: "تجهيزات منطقة 1", stage: "منشار" },
@@ -84,14 +94,35 @@ const FAULT_CODES = [
 let selectedMachine = null;
 let html5QrCode = null;
 let paretoChartInstance = null;
+let cachedFaults = []; // التخزين المؤقت المحدث سحابياً
 
 document.addEventListener("DOMContentLoaded", () => {
     initClock();
     populateFaultCodes();
-    loadFaultsFromStorage();
+    setupRealtimeSync(); // ربط الاستماع الفوري لقاعدة البيانات
     setupEventListeners();
     restoreAdminStateOnLoad();
 });
+
+// الاستماع اللحظي للتغييرات من قاعدة البيانات السحابية
+function setupRealtimeSync() {
+    rtdb.ref('factory5_faults').on('value', (snapshot) => {
+        const data = snapshot.val();
+        if (data) {
+            // تحويل الكائن القادم من الفايربيس إلى مصفوفة
+            cachedFaults = Object.values(data);
+        } else {
+            cachedFaults = [];
+        }
+        // تحديث الواجهة تلقائياً أينما كان المستخدم
+        loadFaultsFromStorage();
+        const activeTab = localStorage.getItem("factory5_active_tab") || "tab-indicators";
+        if (activeTab === "tab-indicators") updateIndicators();
+        else if (activeTab === "tab-machines") updateMachinesPerformanceTable();
+        else if (activeTab === "tab-pareto") updateParetoTable();
+        else if (activeTab === "tab-logs") updateFullLogsTable();
+    });
+}
 
 function initClock() {
     const clockEl = document.getElementById("live-clock");
@@ -115,17 +146,19 @@ function populateFaultCodes() {
     });
 }
 
+// دالة جلب الأعطال من الذاكرة المؤقتة المحدثة سحابياً
 function getStoredFaults() {
-    try {
-        const data = localStorage.getItem("factory5_faults");
-        return data ? JSON.parse(data) : [];
-    } catch (e) {
-        return [];
-    }
+    return cachedFaults;
 }
 
+// دالة الحفظ المباشر على Realtime Database
 function saveStoredFaults(faults) {
-    localStorage.setItem("factory5_faults", JSON.stringify(faults));
+    // تحويل المصفوفة إلى كائن مفتاحي باستخدام الـ id لتخزينه بسلاسة في Firebase
+    const faultsObj = {};
+    faults.forEach(f => {
+        faultsObj[f.id] = f;
+    });
+    rtdb.ref('factory5_faults').set(faultsObj);
 }
 
 function formatDuration(minutesDecimal) {
@@ -415,7 +448,7 @@ function startFaultRecord() {
 
     const faults = getStoredFaults();
     faults.push(newFault);
-    saveStoredFaults(faults);
+    saveStoredFaults(faults); // الحفظ السحابي المباشر
 
     document.getElementById("machine-search-input").value = "";
     document.getElementById("machine-info-card").classList.add("hidden");
@@ -423,7 +456,6 @@ function startFaultRecord() {
     document.getElementById("fault-notes").value = "";
     selectedMachine = null;
 
-    loadFaultsFromStorage();
     alert("تم تسجيل بداية العطل بنجاح");
 }
 
@@ -501,8 +533,7 @@ window.endFault = function(faultId) {
     fault.endTime = Date.now();
     fault.durationMinutes = Number(((fault.endTime - fault.startTime) / 60000).toFixed(3));
     fault.status = "finished";
-    saveStoredFaults(faults);
-    loadFaultsFromStorage();
+    saveStoredFaults(faults); // الحفظ السحابي المباشر
     alert(`تم تسجيل انتهاء العطل. المدة: ${formatDuration(fault.durationMinutes)}`);
 };
 
@@ -510,9 +541,7 @@ window.deleteFault = function(faultId) {
     if (!confirm("هل أنت متأكد من رغبتك في حذف هذا العطل نهائياً؟")) return;
     let faults = getStoredFaults();
     faults = faults.filter(f => f.id !== faultId);
-    saveStoredFaults(faults);
-    loadFaultsFromStorage();
-    switchAdminTab(localStorage.getItem("factory5_active_tab") || "tab-indicators");
+    saveStoredFaults(faults); // الحفظ السحابي المباشر
     alert("تم حذف العطل بنجاح.");
 };
 
