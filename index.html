@@ -7,6 +7,8 @@
     <link rel="stylesheet" href="style.css">
     <!-- مكتبة قراءة باركود QR -->
     <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
+    <!-- OCR لقراءة رقم الماكينة المكتوب مباشرة بالكاميرا -->
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
     <!-- مكتبة الرسوم البيانية Chart.js -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
@@ -46,13 +48,14 @@
                     <div class="search-inline" style="display: flex; gap: 10px;">
                         <input type="text" id="machine-search-input" class="form-control" placeholder="أدخل رقم الماكينة (مثال: 1712)" style="flex: 1; padding: 8px; border: 1px solid #cbd5e1; border-radius: 4px;">
                         <button id="search-machine-btn" class="btn btn-secondary" style="padding: 8px 15px;">بحث</button>
-                        <button id="scan-qr-btn" class="btn btn-info" style="padding: 8px 15px;">📷 مسح QR</button>
+                        <button id="scan-qr-btn" class="btn btn-info" style="padding: 8px 15px;">📷 مسح QR / باركود / رقم</button>
                     </div>
                 </div>
 
                 <!-- قارئ الباركود -->
                 <div id="scanner-container" style="display: none; margin-bottom: 15px;">
                     <div id="reader" style="width: 100%; max-width: 400px; margin: 0 auto;"></div>
+                    <p id="scanner-status" style="text-align:center; margin:10px 0; color:#334155; font-weight:bold;">جاهز للمسح</p>
                     <button id="close-scanner-btn" class="btn btn-danger" style="margin-top: 10px; width: 100%;">إغلاق الكاميرا</button>
                 </div>
 
