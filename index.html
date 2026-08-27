@@ -127,7 +127,7 @@
                 <h2 style="color: #1e293b; margin: 0;">📊 لوحة تحكم الإدارة والتقارير</h2>
                 
                 <div style="display: flex; gap: 10px;">
-                    <!-- زر العودة للتبويبات الرئيسية داخل لوحة الإدارة (تم التعديل لإضافة onclick المباشر) -->
+                    <!-- زر العودة للتبويبات الرئيسية داخل لوحة الإدارة -->
                     <button id="back-to-admin-main-btn" class="btn btn-secondary" onclick="if(typeof switchAdminTab === 'function') switchAdminTab('tab-indicators');" style="background-color: #475569; color: white; padding: 8px 16px; font-weight: bold; border-radius: 4px;">🔙 العودة للوحة الإدارة</button>
                     <!-- زر الخروج النهائي للرئيسية -->
                     <button id="logout-admin-btn" class="btn btn-danger" style="background-color: #dc2626; color: white; padding: 8px 16px; font-weight: bold; border-radius: 4px;">🚪 الخروج للرئيسية</button>
@@ -167,7 +167,7 @@
                 </div>
             </div>
 
-            <!-- 2. أداء الماكينات (داخل لوحة الإدارة فقط) -->
+            <!-- 2. أداء الماكينات -->
             <div id="tab-machines" class="tab-pane">
                 <h3 style="color: #334155; margin-bottom: 10px;">تقرير أداء ومعدلات أعطال الماكينات</h3>
                 <div class="table-responsive">
@@ -190,7 +190,7 @@
                 </div>
             </div>
 
-            <!-- 3. تحليل Pareto (داخل لوحة الإدارة فقط) -->
+            <!-- 3. تحليل Pareto -->
             <div id="tab-pareto" class="tab-pane">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
                     <h3 style="color: #334155; margin: 0;">تحليل بيريتو (Pareto Analysis) للأعطال الأكثر تأثيراً</h3>
