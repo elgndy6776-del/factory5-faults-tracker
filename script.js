@@ -117,7 +117,7 @@ function setupRealtimeSync() {
             // لا نحذف النسخة الاحتياطية تلقائياً؛ الحذف يتم فقط من لوحة الإدارة.
         }
         loadFaultsFromStorage();
-        const activeTab = localStorage.getItem("factory5_active_tab") || "tab-indicators";
+        const activeTab = sessionStorage.getItem("factory5_active_tab") || "tab-indicators";
         if (document.getElementById("admin-panel") && !document.getElementById("admin-panel").classList.contains("hidden")) {
             if (activeTab === "tab-indicators") updateIndicators();
             else if (activeTab === "tab-machines") updateMachinesPerformanceTable();
@@ -215,7 +215,7 @@ window.switchAdminTab = function(tabId) {
         else p.classList.remove("active");
     });
 
-    localStorage.setItem("factory5_active_tab", tabId);
+    sessionStorage.setItem("factory5_active_tab", tabId);
 
     if (tabId === "tab-indicators") updateIndicators();
     else if (tabId === "tab-machines") updateMachinesPerformanceTable();
@@ -224,15 +224,20 @@ window.switchAdminTab = function(tabId) {
 }
 
 function restoreAdminStateOnLoad() {
-    // لوحة الإدارة لا تستعيد حالة تسجيل الدخول عند فتح الصفحة من جديد.
-    // كل تبويب/صفحة جديدة يحتاج إدخال كلمة المرور مرة أخرى.
-    localStorage.removeItem("factory5_admin_open");
-    localStorage.removeItem("factory5_active_tab");
-
+    // sessionStorage خاص بنفس التبويب: يظل الدخول موجوداً عند Refresh فقط،
+    // أما تبويب/جلسة جديدة فتحتاج كلمة المرور من جديد.
     const adminPanel = document.getElementById("admin-panel");
     const loginModal = document.getElementById("login-modal");
-    if (adminPanel) adminPanel.classList.add("hidden");
+    const isAuthenticated = sessionStorage.getItem("factory5_admin_authenticated") === "true";
+
     if (loginModal) loginModal.classList.add("hidden");
+    if (isAuthenticated && adminPanel) {
+        adminPanel.classList.remove("hidden");
+        const activeTab = sessionStorage.getItem("factory5_active_tab") || "tab-indicators";
+        switchAdminTab(activeTab);
+    } else if (adminPanel) {
+        adminPanel.classList.add("hidden");
+    }
 }
 
 function setupEventListeners() {
@@ -340,8 +345,8 @@ function setupEventListeners() {
         logoutAdminBtn.addEventListener("click", () => {
             const adminPanel = document.getElementById("admin-panel");
             if (adminPanel) adminPanel.classList.add("hidden");
-            localStorage.setItem("factory5_admin_open", "false");
-            localStorage.removeItem("factory5_active_tab");
+            sessionStorage.removeItem("factory5_admin_authenticated");
+            sessionStorage.removeItem("factory5_active_tab");
         });
     }
 
@@ -409,60 +414,124 @@ function findAndSelectMachine(query, fromScanner = false) {
     }
 }
 
+function selectScannedMachine(rawText, source = "scanner") {
+    const raw = String(rawText || "").trim();
+    if (!raw) return false;
+
+    // نحاول الرقم كما هو أولاً، ثم نستخرج كل مجموعات الأرقام من نتيجة QR/الباركود/OCR.
+    const candidates = [raw, ...((raw.match(/\d+/g) || []))];
+    for (const candidate of candidates) {
+        const found = findAndSelectMachine(candidate, true);
+        if (found) {
+            const input = document.getElementById("machine-search-input");
+            if (input) input.value = candidate;
+            stopScanner();
+            return true;
+        }
+    }
+    return false;
+}
+
+function setScannerStatus(message) {
+    const status = document.getElementById("scanner-status");
+    if (status) status.textContent = message;
+}
+
 function startScanner() {
     const container = document.getElementById("scanner-container");
     if (!container) return;
     container.style.display = "block";
+    setScannerStatus("وجّه الكاميرا إلى QR أو الباركود أو رقم الماكينة المكتوب...");
 
     if (typeof Html5Qrcode === "undefined") {
-        alert("مكتبة قراءة الباركود غير متوفرة.");
+        alert("مكتبة قراءة QR/الباركود غير متوفرة.");
         container.style.display = "none";
         return;
     }
 
     if (html5QrCode) {
-        html5QrCode.stop().catch(() => {}).then(() => {
-            initCameraScanner(container);
-        });
+        html5QrCode.stop().catch(() => {}).then(() => initCameraScanner(container));
     } else {
         initCameraScanner(container);
     }
+}
+
+let ocrTimer = null;
+let ocrBusy = false;
+
+function startNumberOCRFallback() {
+    if (ocrTimer) clearInterval(ocrTimer);
+    // OCR يعمل كخطة بديلة للأرقام المطبوعة العادية التي ليست QR أو باركود.
+    ocrTimer = setInterval(async () => {
+        if (ocrBusy || !html5QrCode || !html5QrCode.isScanning || typeof Tesseract === "undefined") return;
+        const video = document.querySelector('#reader video');
+        if (!video || !video.videoWidth || !video.videoHeight) return;
+
+        ocrBusy = true;
+        try {
+            setScannerStatus("جاري التعرف على رقم الماكينة...");
+            const canvas = document.createElement('canvas');
+            const scale = Math.min(1, 900 / video.videoWidth);
+            canvas.width = Math.max(1, Math.floor(video.videoWidth * scale));
+            canvas.height = Math.max(1, Math.floor(video.videoHeight * scale));
+            const ctx = canvas.getContext('2d', { willReadFrequently: true });
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+            const result = await Tesseract.recognize(canvas, 'eng', {
+                logger: () => {},
+                tessedit_char_whitelist: '0123456789'
+            });
+            const text = (result && result.data && result.data.text || '').replace(/[^0-9\s]/g, ' ').trim();
+            if (text && selectScannedMachine(text, 'ocr')) return;
+            setScannerStatus("لم يتم التعرف بعد... ثبّت الكاميرا على رقم الماكينة بوضوح.");
+        } catch (err) {
+            console.warn('OCR error:', err);
+        } finally {
+            ocrBusy = false;
+        }
+    }, 2200);
 }
 
 function initCameraScanner(container) {
     html5QrCode = new Html5Qrcode("reader");
     const qrboxFunction = (viewfinderWidth, viewfinderHeight) => {
         const minEdge = Math.min(viewfinderWidth, viewfinderHeight);
-        return { width: Math.floor(minEdge * 0.75), height: Math.floor(minEdge * 0.75) };
+        return { width: Math.floor(minEdge * 0.85), height: Math.floor(minEdge * 0.55) };
     };
 
+    const F = typeof Html5QrcodeSupportedFormats !== "undefined" ? Html5QrcodeSupportedFormats : {};
+    const formats = [
+        F.QR_CODE, F.CODE_128, F.CODE_39, F.CODE_93,
+        F.EAN_13, F.EAN_8, F.UPC_A, F.UPC_E
+    ].filter(Boolean);
+
     html5QrCode.start(
-        { facingMode: "environment" },
-        { fps: 15, qrbox: qrboxFunction, aspectRatio: 1.0 },
+        { facingMode: { exact: "environment" } },
+        { fps: 12, qrbox: qrboxFunction, aspectRatio: 1.5, formatsToSupport: formats },
         (decodedText) => {
-            const scannedNumber = decodedText.trim();
-            if (!scannedNumber) return;
-            const searchInput = document.getElementById("machine-search-input");
-            if (searchInput) searchInput.value = scannedNumber;
-            // أوقف الكاميرا فوراً ثم اختر الماكينة تلقائياً لمنع قراءة نفس الكود أكثر من مرة.
-            stopScanner();
-            const found = findAndSelectMachine(scannedNumber, true);
-            // إذا كان الرقم من ضمن الماكينات المسجلة، يتم الانتقال مباشرة لخطوة اختيار العطل.
-            if (found) {
-                const registration = document.getElementById("fault-registration-section");
-                if (registration) registration.classList.remove("hidden");
-            }
+            if (selectScannedMachine(decodedText, 'code')) return;
+            setScannerStatus("تمت القراءة لكن الرقم غير موجود في قائمة الماكينات.");
         },
         () => {}
-    ).catch(err => {
+    ).then(() => startNumberOCRFallback()).catch(() => {
+        // بعض الهواتف لا تدعم exact، فنرجع للوضع العام للكاميرا الخلفية.
+        return html5QrCode.start(
+            { facingMode: "environment" },
+            { fps: 12, qrbox: qrboxFunction, aspectRatio: 1.5, formatsToSupport: formats },
+            (decodedText) => selectScannedMachine(decodedText, 'code'),
+            () => {}
+        ).then(() => startNumberOCRFallback());
+    }).catch(err => {
         console.error("Camera error:", err);
-        alert("تعذر فتح الكاميرا. يرجى إعطاء صلاحية الكاميرا للمتصفح.");
+        alert("تعذر فتح الكاميرا. يرجى إعطاء صلاحية الكاميرا للمتصفح وفتح الموقع عبر HTTPS.");
         container.style.display = "none";
     });
 }
 
 function stopScanner() {
     const container = document.getElementById("scanner-container");
+    if (ocrTimer) { clearInterval(ocrTimer); ocrTimer = null; }
+    ocrBusy = false;
     if (!container) return;
     if (html5QrCode && html5QrCode.isScanning) {
         html5QrCode.stop().then(() => { container.style.display = "none"; }).catch(() => { container.style.display = "none"; });
@@ -607,8 +676,9 @@ function verifyAdminPassword() {
     if (pass === "205080") {
         document.getElementById("login-modal").classList.add("hidden");
         document.getElementById("admin-panel").classList.remove("hidden");
-        // فتح الإدارة للجلسة الحالية فقط، بدون حفظ حالة الدخول في المتصفح.
-        switchAdminTab("tab-indicators");
+        // حفظ الدخول داخل نفس التبويب فقط حتى يظل مفتوحاً عند Refresh.
+        sessionStorage.setItem("factory5_admin_authenticated", "true");
+        switchAdminTab(sessionStorage.getItem("factory5_active_tab") || "tab-indicators");
     } else {
         errorMsg.classList.remove("hidden");
     }
