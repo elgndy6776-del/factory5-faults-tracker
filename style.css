@@ -535,3 +535,71 @@ body {
 .hidden {
     display: none !important;
 }
+
+/* ================= تحسين شامل للموبايل ================= */
+@media (max-width: 768px) {
+    html, body { width: 100%; overflow-x: hidden; }
+    body { font-size: 15px; }
+
+    .app-header, .main-header { padding: 0.8rem 1rem !important; }
+    .header-content, .admin-header {
+        flex-direction: column !important;
+        align-items: stretch !important;
+        gap: 0.7rem !important;
+        padding: 0.9rem 1rem !important;
+    }
+    .header-content h1, .logo-area h1 { font-size: 1.2rem !important; text-align: center; }
+    .header-controls, .header-actions { width: 100%; display: flex; gap: 0.5rem; justify-content: space-between; }
+    .header-controls .btn, .header-actions .btn { flex: 1; padding: 0.65rem 0.5rem; font-size: 0.85rem; }
+    .live-clock { padding: 0.5rem 0.65rem; font-size: 0.9rem; white-space: nowrap; }
+
+    .container { margin: 1rem auto !important; padding: 0 0.7rem !important; gap: 1rem !important; }
+    .card { padding: 1rem !important; border-radius: 10px; }
+    .card h2 { font-size: 1.15rem; }
+    h3 { font-size: 1.05rem; }
+
+    .view-mode-switcher { display: grid !important; grid-template-columns: 1fr 1fr; gap: 0.5rem; }
+    .view-mode-switcher .btn { width: 100%; padding: 0.65rem 0.35rem; font-size: 0.82rem; }
+
+    .search-flex { flex-direction: column; }
+    .search-flex input { min-width: 0; width: 100%; }
+    .search-flex .btn { width: 100%; }
+    .btn { min-height: 42px; padding: 0.7rem 0.85rem; font-size: 0.92rem; }
+    .btn-lg { padding: 0.85rem 1rem; font-size: 1rem; }
+    .form-control, input[type="text"], input[type="password"], input[type="date"], select, textarea { font-size: 16px !important; padding: 0.7rem 0.75rem; }
+
+    #reader, #scanner-container #reader { max-width: 100% !important; width: 100% !important; }
+    #scanner-container { width: 100%; }
+    .faults-grid { grid-template-columns: 1fr !important; gap: 0.8rem; }
+    .fault-card { padding: 0.9rem; }
+    .info-grid, .kpi-grid, .filter-row, .summary-grid { grid-template-columns: 1fr !important; gap: 0.7rem; }
+    .kpi-card { padding: 1rem; }
+    .kpi-card p { font-size: 1.5rem; }
+
+    .admin-panel { width: 100vw !important; height: 100dvh !important; }
+    .admin-header h2 { font-size: 1.05rem !important; text-align: center; }
+    .admin-header > div { width: 100%; display: grid !important; grid-template-columns: 1fr 1fr; gap: 0.5rem !important; }
+    .admin-header .btn { width: 100%; padding: 0.65rem 0.35rem !important; font-size: 0.8rem; }
+    .admin-tabs { padding: 0.4rem !important; gap: 0.4rem !important; overflow-x: auto; flex-wrap: nowrap !important; -webkit-overflow-scrolling: touch; }
+    .admin-tabs .tab-btn { flex: 0 0 auto !important; padding: 0.65rem 0.75rem !important; font-size: 0.82rem !important; }
+    .tab-content-container { margin: 0.75rem auto !important; padding: 0 0.6rem !important; }
+
+    .table-responsive { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    .data-table { min-width: 680px; font-size: 0.78rem; }
+    .data-table th, .data-table td { padding: 0.55rem 0.5rem; white-space: nowrap; }
+
+    #pareto-chart-card, .chart-container { width: 100% !important; overflow: hidden; }
+    #pareto-canvas { max-width: 100% !important; width: 100% !important; }
+    canvas { max-width: 100% !important; }
+
+    .modal { padding: 0.75rem; align-items: center; }
+    .modal-content { padding: 1.2rem; width: 100%; max-width: 100%; }
+    .modal-buttons { flex-direction: column; }
+    .modal-buttons button { width: 100%; }
+}
+
+@media (max-width: 380px) {
+    .header-controls, .header-actions { flex-direction: column; }
+    .view-mode-switcher { grid-template-columns: 1fr; }
+    .header-content h1 { font-size: 1.05rem !important; }
+}
