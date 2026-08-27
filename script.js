@@ -160,14 +160,28 @@ function saveStoredFaults(faults) {
     rtdb.ref('factory5_faults').set(faultsObj);
 }
 
-function formatDuration(minutesDecimal) {
-    if (minutesDecimal === null || minutesDecimal === undefined || isNaN(minutesDecimal)) return "-";
-    const totalSeconds = Math.round(minutesDecimal * 60);
+// مدة دقيقة بدون تقريب: نعتمد على وقت البداية والنهاية للمسجلات الجديدة،
+// مع دعم السجلات القديمة التي تحتوي durationMinutes حتى لا نفقد أي بيانات.
+function getFaultDurationSeconds(fault) {
+    if (!fault) return 0;
+    if (Number.isFinite(Number(fault.durationSeconds))) return Math.max(0, Number(fault.durationSeconds));
+    if (fault.startTime && fault.endTime) return Math.max(0, (Number(fault.endTime) - Number(fault.startTime)) / 1000);
+    if (Number.isFinite(Number(fault.durationMinutes))) return Math.max(0, Number(fault.durationMinutes) * 60);
+    return 0;
+}
+
+function getFaultDurationMinutes(fault) {
+    return getFaultDurationSeconds(fault) / 60;
+}
+
+function formatDuration(value, unit = "minutes") {
+    if (value === null || value === undefined || isNaN(value)) return "-";
+    const totalSeconds = Math.max(0, Math.round(unit === "seconds" ? Number(value) : Number(value) * 60));
     if (totalSeconds < 60) return `${totalSeconds} ثانية`;
     const mins = Math.floor(totalSeconds / 60);
     const secs = totalSeconds % 60;
     if (secs === 0) return `${mins} دقيقة`;
-    return `${mins.toFixed(1)} دقيقة (${mins} د و ${secs} ث)`;
+    return `${mins} دقيقة و ${secs} ثانية`;
 }
 
 // دالة التنقل بين تبويبات لوحة الإدارة العامة
@@ -392,8 +406,10 @@ function initCameraScanner(container) {
         { fps: 15, qrbox: qrboxFunction, aspectRatio: 1.0 },
         (decodedText) => {
             const scannedNumber = decodedText.trim();
+            if (!scannedNumber) return;
             const searchInput = document.getElementById("machine-search-input");
             if (searchInput) searchInput.value = scannedNumber;
+            // أوقف الكاميرا فوراً ثم اختر الماكينة تلقائياً لمنع قراءة نفس الكود أكثر من مرة.
             stopScanner();
             findAndSelectMachine(scannedNumber);
         },
@@ -438,7 +454,8 @@ function startFaultRecord() {
         faultName: faultObj.name,
         startTime: Date.now(),
         endTime: null,
-        durationMinutes: 0,
+        durationMinutes: 0, // للتوافق مع البيانات القديمة
+        durationSeconds: 0,
         notes: notes,
         status: "active"
     };
@@ -528,10 +545,12 @@ window.endFault = function(faultId) {
     const fault = faults.find(f => f.id === faultId);
     if (!fault) return;
     fault.endTime = Date.now();
-    fault.durationMinutes = Number(((fault.endTime - fault.startTime) / 60000).toFixed(3));
+    // نحفظ المدة بالثواني بدون تقريب، ونحتفظ بالحقل القديم للتوافق فقط.
+    fault.durationSeconds = Math.max(0, (fault.endTime - fault.startTime) / 1000);
+    fault.durationMinutes = fault.durationSeconds / 60;
     fault.status = "finished";
     saveStoredFaults(faults);
-    alert(`تم تسجيل انتهاء العطل. المدة: ${formatDuration(fault.durationMinutes)}`);
+    alert(`تم تسجيل انتهاء العطل. المدة: ${formatDuration(fault.durationSeconds, "seconds")}`);
 };
 
 window.deleteFault = function(faultId) {
@@ -560,7 +579,7 @@ function updateIndicators() {
     const total = faults.length;
     const active = faults.filter(f => f.status === "active").length;
     const finished = faults.filter(f => f.status === "finished").length;
-    const totalDurationDecimal = faults.reduce((sum, f) => sum + (f.durationMinutes || 0), 0);
+    const totalDurationDecimal = faults.reduce((sum, f) => sum + getFaultDurationMinutes(f), 0);
 
     const setEl = (id, val) => { const el = document.getElementById(id); if(el) el.textContent = val; };
     setEl("kpi-total", total);
@@ -574,14 +593,14 @@ function updateMachinesPerformanceTable() {
     const tbody = document.querySelector("#machines-performance-table tbody");
     if (!tbody) return;
     tbody.innerHTML = "";
-    const totalFactoryTime = faults.reduce((sum, f) => sum + (f.durationMinutes || 0), 0) || 1;
+    const totalFactoryTime = faults.reduce((sum, f) => sum + getFaultDurationMinutes(f), 0) || 1;
 
     MACHINES.forEach(machine => {
         const mFaults = faults.filter(f => f.machineNumber === machine.number);
         const count = mFaults.length;
-        const totalDuration = mFaults.reduce((sum, f) => sum + (f.durationMinutes || 0), 0);
+        const totalDuration = mFaults.reduce((sum, f) => sum + getFaultDurationMinutes(f), 0);
         const avgDuration = count > 0 ? totalDuration / count : 0;
-        const maxDuration = count > 0 ? Math.max(...mFaults.map(f => f.durationMinutes || 0)) : 0;
+        const maxDuration = count > 0 ? Math.max(...mFaults.map(f => getFaultDurationMinutes(f))) : 0;
         const stopRatio = ((totalDuration / totalFactoryTime) * 100).toFixed(1);
 
         const tr = document.createElement("tr");
@@ -620,7 +639,7 @@ function applyAdvancedSearch() {
     const count = filtered.length;
     const finished = filtered.filter(f => f.status === "finished").length;
     const active = filtered.filter(f => f.status === "active").length;
-    const totalDuration = filtered.reduce((sum, f) => sum + (f.durationMinutes || 0), 0);
+    const totalDuration = filtered.reduce((sum, f) => sum + getFaultDurationMinutes(f), 0);
 
     const setEl = (id, val) => { const el = document.getElementById(id); if(el) el.textContent = val; };
     setEl("res-count", count);
@@ -628,7 +647,7 @@ function applyAdvancedSearch() {
     setEl("res-active", active);
     setEl("res-total-duration", formatDuration(totalDuration));
     setEl("res-avg-duration", formatDuration(count > 0 ? totalDuration / count : 0));
-    setEl("res-max-duration", formatDuration(count > 0 ? Math.max(...filtered.map(f => f.durationMinutes || 0)) : 0));
+    setEl("res-max-duration", formatDuration(count > 0 ? Math.max(...filtered.map(f => getFaultDurationMinutes(f))) : 0));
     
     document.getElementById("search-results-summary").classList.remove("hidden");
 
@@ -646,7 +665,7 @@ function applyAdvancedSearch() {
             <td>كود ${f.faultCode || '-'} — ${f.faultName || '-'}</td>
             <td>${f.startTime ? new Date(f.startTime).toLocaleString("ar-EG") : '-'}</td>
             <td>${f.endTime ? new Date(f.endTime).toLocaleTimeString("ar-EG") : "مفتوح"}</td>
-            <td>${f.status === "finished" ? formatDuration(f.durationMinutes) : "-"}</td>
+            <td>${f.status === "finished" ? formatDuration(getFaultDurationSeconds(f), "seconds") : "-"}</td>
         `;
         tbody.appendChild(tr);
     });
@@ -659,7 +678,7 @@ function updateParetoTable() {
     tbody.innerHTML = "";
 
     const totalFaultsCount = faults.length || 1;
-    const totalFaultsDuration = faults.reduce((sum, f) => sum + (f.durationMinutes || 0), 0) || 1;
+    const totalFaultsDuration = faults.reduce((sum, f) => sum + getFaultDurationSeconds(f), 0) || 1;
 
     const paretoMap = {};
     FAULT_CODES.forEach(fc => { paretoMap[fc.code] = { code: fc.code, name: fc.name, count: 0, duration: 0 }; });
@@ -667,7 +686,7 @@ function updateParetoTable() {
     faults.forEach(f => {
         if (paretoMap[f.faultCode]) {
             paretoMap[f.faultCode].count += 1;
-            paretoMap[f.faultCode].duration += (f.durationMinutes || 0);
+            paretoMap[f.faultCode].duration += getFaultDurationSeconds(f);
         }
     });
 
@@ -681,7 +700,7 @@ function updateParetoTable() {
         cumulativeDurationPercent += durationRatio;
 
         chartLabels.push(`كود ${item.code}: ${item.name}`);
-        chartDurations.push(Number(item.duration.toFixed(2)));
+        chartDurations.push(Number((item.duration / 60).toFixed(3)));
         chartCumulative.push(Number(cumulativeDurationPercent.toFixed(1)));
 
         const tr = document.createElement("tr");
@@ -690,7 +709,7 @@ function updateParetoTable() {
             <td>${item.name}</td>
             <td>${item.count}</td>
             <td>${countRatio}%</td>
-            <td>${formatDuration(item.duration)}</td>
+            <td>${formatDuration(item.duration, "seconds")}</td>
             <td>${durationRatio.toFixed(1)}%</td>
             <td><strong>${cumulativeDurationPercent.toFixed(1)}%</strong></td>
         `;
@@ -725,52 +744,49 @@ function renderParetoChart(labels, durations, cumulative) {
     });
 }
 
-function printParetoChartOnly() {
-    const chartCard = document.getElementById("pareto-chart-card");
-    if (!chartCard) return;
-    
-    const printWindow = window.open('', '_blank');
-    printWindow.document.write(`
-        <html lang="ar" dir="rtl">
-        <head>
-            <title>طباعة تحليل Pareto</title>
-            <style>
-                body { font-family: Tahoma, sans-serif; text-align: center; padding: 20px; }
-                h2 { color: #1e293b; }
-                .chart-container { width: 90%; max-width: 900px; margin: 0 auto; height: 500px; }
-            </style>
-        </head>
-        <body>
-            <h2>📈 تحليل Pareto لأعطال مصنع 5</h2>
-            <div class="chart-container">
-                <canvas id="printCanvas"></canvas>
-            </div>
-            <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-            <script>
-                setTimeout(() => {
-                    const originalCanvas = window.opener.document.getElementById('pareto-canvas');
-                    if (originalCanvas) {
-                        const newCanvas = document.getElementById('printCanvas');
-                        const ctx = newCanvas.getContext('2d');
-                        const chartInstance = window.opener.paretoChartInstance;
-                        if(chartInstance) {
-                            new Chart(ctx, {
-                                type: chartInstance.config.type,
-                                data: JSON.parse(JSON.stringify(chartInstance.config.data)),
-                                options: { responsive: true, maintainAspectRatio: false }
-                            });
-                        }
-                    }
-                    setTimeout(() => { window.print(); window.close(); }, 500);
-                }, 300);
-            </script>
-        </body>
-        </html>
-    `);
-    printWindow.document.close();
+function buildParetoPrintHtml(includeTable) {
+    const canvas = document.getElementById("pareto-canvas");
+    if (!canvas) return null;
+    // تحويل الـ canvas إلى صورة يضمن ظهور الرسم في الطباعة بدلاً من صفحة بيضاء.
+    const chartImage = canvas.toDataURL("image/png", 1.0);
+    const table = document.getElementById("pareto-table");
+    const tableHtml = includeTable && table ? table.outerHTML : "";
+    return `
+        <html lang="ar" dir="rtl"><head><title>تحليل Pareto</title>
+        <style>
+            body{font-family:Tahoma,Arial,sans-serif;padding:20px;color:#111;text-align:center;background:#fff}
+            h2{margin-bottom:20px}.chart{width:100%;max-width:1100px;height:auto;display:block;margin:auto}
+            table{width:100%;border-collapse:collapse;margin-top:25px;font-size:12px;direction:rtl}
+            th,td{border:1px solid #333;padding:7px;text-align:center}th{background:#eee}
+            @page{size:auto;margin:12mm}
+        </style></head><body>
+        <h2>📈 تحليل Pareto لأعطال مصنع 5</h2>
+        <img class="chart" src="${chartImage}" alt="Pareto Chart">
+        ${includeTable ? `<h3>تفاصيل تحليل الأعطال</h3>${tableHtml}` : ""}
+        </body></html>`;
 }
 
-function executePrintPareto() { window.print(); }
+function printParetoChartOnly() {
+    const html = buildParetoPrintHtml(false);
+    if (!html) return alert("لا يوجد رسم Pareto للطباعة.");
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) return alert("المتصفح منع نافذة الطباعة. اسمح بالنوافذ المنبثقة ثم حاول مرة أخرى.");
+    printWindow.document.write(html);
+    printWindow.document.close();
+    printWindow.focus();
+    setTimeout(() => { printWindow.print(); }, 300);
+}
+
+function executePrintPareto() {
+    const html = buildParetoPrintHtml(true);
+    if (!html) return alert("لا يوجد تحليل Pareto للطباعة.");
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) return alert("المتصفح منع نافذة الطباعة. اسمح بالنوافذ المنبثقة ثم حاول مرة أخرى.");
+    printWindow.document.write(html);
+    printWindow.document.close();
+    printWindow.focus();
+    setTimeout(() => { printWindow.print(); }, 300);
+}
 
 function updateFullLogsTable() {
     const faults = getStoredFaults();
@@ -793,7 +809,7 @@ function updateFullLogsTable() {
             <td>${f.faultName || '-'}</td>
             <td>${f.startTime ? new Date(f.startTime).toLocaleTimeString("ar-EG") : '-'}</td>
             <td>${f.endTime ? new Date(f.endTime).toLocaleTimeString("ar-EG") : "مفتوح"}</td>
-            <td>${f.status === "finished" ? formatDuration(f.durationMinutes) : "مفتوح"}</td>
+            <td>${f.status === "finished" ? formatDuration(getFaultDurationSeconds(f), "seconds") : "مفتوح"}</td>
             <td>${f.notes || "-"}</td>
             <td><button class="btn btn-danger" style="padding: 4px 8px; font-size: 12px;" onclick="deleteFault('${f.id}')">🗑 حذف</button></td>
         `;
@@ -824,7 +840,7 @@ function executePrintReport() {
     });
 
     document.getElementById("print-meta-info").textContent = `تاريخ الاستخراج: ${new Date().toLocaleString("ar-EG")} | الفترة: ${dateFrom || 'البداية'} إلى ${dateTo || 'الآن'}`;
-    document.getElementById("print-summary-box").innerHTML = `<strong>إجمالي الأعطال بالتقرير:</strong> ${filtered.length} &nbsp;|&nbsp; <strong>إجمالي وقت التوقف:</strong> ${formatDuration(filtered.reduce((sum, f) => sum + (f.durationMinutes || 0), 0))}`;
+    document.getElementById("print-summary-box").innerHTML = `<strong>إجمالي الأعطال بالتقرير:</strong> ${filtered.length} &nbsp;|&nbsp; <strong>إجمالي وقت التوقف:</strong> ${formatDuration(filtered.reduce((sum, f) => sum + getFaultDurationMinutes(f), 0))}`;
 
     const tbody = document.querySelector("#print-table-element tbody");
     tbody.innerHTML = "";
@@ -839,7 +855,7 @@ function executePrintReport() {
             <td>${f.faultName || '-'}</td>
             <td>${f.startTime ? new Date(f.startTime).toLocaleTimeString("ar-EG") : '-'}</td>
             <td>${f.endTime ? new Date(f.endTime).toLocaleTimeString("ar-EG") : "مفتوح"}</td>
-            <td>${f.status === "finished" ? formatDuration(f.durationMinutes) : "مفتوح"}</td>
+            <td>${f.status === "finished" ? formatDuration(getFaultDurationSeconds(f), "seconds") : "مفتوح"}</td>
         `;
         tbody.appendChild(tr);
     });
