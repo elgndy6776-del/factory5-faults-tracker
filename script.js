@@ -1,16 +1,17 @@
 /**
- * نظام أعطال مصنع 5 - الملف البرمجي الرئيسي (النسخة الكاملة النهائية - محسنة للموبايل ومعدلة للربط السحابي Firebase Realtime Database)
+ * نظام أعطال مصنع 5 - الملف البرمجي الرئيسي (النسخة الكاملة النهائية - محدثة ومصلحة للأزرار والربط السحابي)
  */
 
 // إعدادات الاتصال بـ Firebase Realtime Database
-// (تأكد من مطابقة هذه البيانات لبروجكت الخاص بك على فايبربيس)
 const firebaseConfig = {
     databaseURL: "https://factory5-faults-default-rtdb.firebaseio.com/"
 };
 
 // تهيئة Firebase
-firebase.initializeApp(firebaseConfig);
-const rtdb = firebase.database();
+if (typeof firebase !== 'undefined' && !firebase.apps.length) {
+    firebase.initializeApp(firebaseConfig);
+}
+const rtdb = typeof firebase !== 'undefined' ? firebase.database() : null;
 
 const MACHINES = [
     { number: "1712", zone: "منطقة 1", section: "تجهيزات منطقة 1", stage: "منشار" },
@@ -94,33 +95,33 @@ const FAULT_CODES = [
 let selectedMachine = null;
 let html5QrCode = null;
 let paretoChartInstance = null;
-let cachedFaults = []; // التخزين المؤقت المحدث سحابياً
+let cachedFaults = [];
 
 document.addEventListener("DOMContentLoaded", () => {
     initClock();
     populateFaultCodes();
-    setupRealtimeSync(); // ربط الاستماع الفوري لقاعدة البيانات
+    setupRealtimeSync();
     setupEventListeners();
     restoreAdminStateOnLoad();
 });
 
-// الاستماع اللحظي للتغييرات من قاعدة البيانات السحابية
 function setupRealtimeSync() {
+    if (!rtdb) return;
     rtdb.ref('factory5_faults').on('value', (snapshot) => {
         const data = snapshot.val();
         if (data) {
-            // تحويل الكائن القادم من الفايربيس إلى مصفوفة
             cachedFaults = Object.values(data);
         } else {
             cachedFaults = [];
         }
-        // تحديث الواجهة تلقائياً أينما كان المستخدم
         loadFaultsFromStorage();
         const activeTab = localStorage.getItem("factory5_active_tab") || "tab-indicators";
-        if (activeTab === "tab-indicators") updateIndicators();
-        else if (activeTab === "tab-machines") updateMachinesPerformanceTable();
-        else if (activeTab === "tab-pareto") updateParetoTable();
-        else if (activeTab === "tab-logs") updateFullLogsTable();
+        if (document.getElementById("admin-panel") && !document.getElementById("admin-panel").classList.contains("hidden")) {
+            if (activeTab === "tab-indicators") updateIndicators();
+            else if (activeTab === "tab-machines") updateMachinesPerformanceTable();
+            else if (activeTab === "tab-pareto") updateParetoTable();
+            else if (activeTab === "tab-logs") updateFullLogsTable();
+        }
     });
 }
 
@@ -146,14 +147,12 @@ function populateFaultCodes() {
     });
 }
 
-// دالة جلب الأعطال من الذاكرة المؤقتة المحدثة سحابياً
 function getStoredFaults() {
     return cachedFaults;
 }
 
-// دالة الحفظ المباشر على Realtime Database
 function saveStoredFaults(faults) {
-    // تحويل المصفوفة إلى كائن مفتاحي باستخدام الـ id لتخزينه بسلاسة في Firebase
+    if (!rtdb) return;
     const faultsObj = {};
     faults.forEach(f => {
         faultsObj[f.id] = f;
@@ -171,7 +170,8 @@ function formatDuration(minutesDecimal) {
     return `${mins.toFixed(1)} دقيقة (${mins} د و ${secs} ث)`;
 }
 
-function switchAdminTab(tabId) {
+// دالة التنقل بين تبويبات لوحة الإدارة العامة
+window.switchAdminTab = function(tabId) {
     const tabBtns = document.querySelectorAll(".tab-btn");
     const tabPanes = document.querySelectorAll(".tab-pane");
 
@@ -188,9 +188,9 @@ function switchAdminTab(tabId) {
     localStorage.setItem("factory5_active_tab", tabId);
 
     if (tabId === "tab-indicators") updateIndicators();
-    if (tabId === "tab-machines") updateMachinesPerformanceTable();
-    if (tabId === "tab-pareto") updateParetoTable();
-    if (tabId === "tab-logs") updateFullLogsTable();
+    else if (tabId === "tab-machines") updateMachinesPerformanceTable();
+    else if (tabId === "tab-pareto") updateParetoTable();
+    else if (tabId === "tab-logs") updateFullLogsTable();
 }
 
 function restoreAdminStateOnLoad() {
@@ -207,6 +207,7 @@ function restoreAdminStateOnLoad() {
 }
 
 function setupEventListeners() {
+    // 1. بحث الماكينات
     const searchBtn = document.getElementById("search-machine-btn");
     if (searchBtn) {
         searchBtn.addEventListener("click", () => {
@@ -222,61 +223,66 @@ function setupEventListeners() {
         });
     }
 
+    // 2. الكاميرا والـ QR
     const scanBtn = document.getElementById("scan-qr-btn");
     if (scanBtn) scanBtn.addEventListener("click", startScanner);
     
     const closeScannerBtn = document.getElementById("close-scanner-btn");
     if (closeScannerBtn) closeScannerBtn.addEventListener("click", stopScanner);
 
+    // 3. تسجيل العطل الجديد
     const startFaultBtn = document.getElementById("start-fault-btn");
     if (startFaultBtn) startFaultBtn.addEventListener("click", startFaultRecord);
 
+    // 4. أزرار تبديل الواجهات (عمال / فنيين) - التصحيح الجذري للعمل الفوري
     const switchWorkerView = document.getElementById("switch-worker-view");
     const switchTechView = document.getElementById("switch-tech-view");
     const faultRegSection = document.getElementById("fault-registration-section");
     const techDashboardSection = document.getElementById("tech-dashboard-section");
     const workerActiveFaultsSection = document.getElementById("worker-active-faults-section");
 
-    if (switchWorkerView && switchTechView) {
+    if (switchWorkerView) {
         switchWorkerView.addEventListener("click", () => {
             switchWorkerView.classList.add("active-mode-btn", "btn-primary");
             switchWorkerView.classList.remove("btn-outline");
-            switchTechView.classList.remove("active-mode-btn", "btn-primary");
-            switchTechView.classList.add("btn-outline");
-            
+            if (switchTechView) {
+                switchTechView.classList.remove("active-mode-btn", "btn-primary");
+                switchTechView.classList.add("btn-outline");
+            }
             if (faultRegSection) faultRegSection.classList.remove("hidden");
             if (workerActiveFaultsSection) workerActiveFaultsSection.classList.remove("hidden");
             if (techDashboardSection) techDashboardSection.classList.add("hidden");
         });
+    }
 
+    if (switchTechView) {
         switchTechView.addEventListener("click", () => {
             switchTechView.classList.add("active-mode-btn", "btn-primary");
             switchTechView.classList.remove("btn-outline");
-            switchWorkerView.classList.remove("active-mode-btn", "btn-primary");
-            switchWorkerView.classList.add("btn-outline");
-            
+            if (switchWorkerView) {
+                switchWorkerView.classList.remove("active-mode-btn", "btn-primary");
+                switchWorkerView.classList.add("btn-outline");
+            }
             if (faultRegSection) faultRegSection.classList.add("hidden");
             if (workerActiveFaultsSection) workerActiveFaultsSection.classList.add("hidden");
             if (techDashboardSection) techDashboardSection.classList.remove("hidden");
+            loadFaultsFromStorage();
         });
     }
 
-    const backToIndicatorsBtns = document.querySelectorAll(".back-to-indicators-btn, #back-to-indicators, [data-target='tab-indicators']");
-    backToIndicatorsBtns.forEach(btn => {
-        btn.addEventListener("click", (e) => {
-            e.preventDefault();
-            const targetTab = btn.getAttribute("data-target") || "tab-indicators";
-            switchAdminTab(targetTab);
-        });
-    });
-
+    // 5. زر فتح نافذة تسجيل دخول الإدارة
     const adminLoginBtn = document.getElementById("admin-login-btn");
     if (adminLoginBtn) {
         adminLoginBtn.addEventListener("click", () => {
-            document.getElementById("login-modal").classList.remove("hidden");
-            document.getElementById("admin-password-input").value = "";
-            document.getElementById("login-error-msg").classList.add("hidden");
-            document.getElementById("admin-password-input").focus();
+            const loginModal = document.getElementById("login-modal");
+            if (loginModal) loginModal.classList.remove("hidden");
+            const passInput = document.getElementById("admin-password-input");
+            if (passInput) {
+                passInput.value = "";
+                passInput.focus();
+            }
+            const errorMsg = document.getElementById("login-error-msg");
+            if (errorMsg) errorMsg.classList.add("hidden");
         });
     }
 
@@ -288,7 +294,9 @@ function setupEventListeners() {
     }
 
     const submitLoginBtn = document.getElementById("submit-login-btn");
-    if (submitLoginBtn) submitLoginBtn.addEventListener("click", verifyAdminPassword);
+    if (submitLoginBtn) {
+        submitLoginBtn.addEventListener("click", verifyAdminPassword);
+    }
 
     const adminPasswordInput = document.getElementById("admin-password-input");
     if (adminPasswordInput) {
@@ -297,15 +305,18 @@ function setupEventListeners() {
         });
     }
 
+    // 6. زر تسجيل الخروج من لوحة الإدارة
     const logoutAdminBtn = document.getElementById("logout-admin-btn");
     if (logoutAdminBtn) {
         logoutAdminBtn.addEventListener("click", () => {
-            document.getElementById("admin-panel").classList.add("hidden");
+            const adminPanel = document.getElementById("admin-panel");
+            if (adminPanel) adminPanel.classList.add("hidden");
             localStorage.setItem("factory5_admin_open", "false");
             localStorage.removeItem("factory5_active_tab");
         });
     }
 
+    // 7. تبويبات لوحة التحكم
     const tabBtns = document.querySelectorAll(".tab-btn");
     tabBtns.forEach(btn => {
         btn.addEventListener("click", () => {
@@ -371,35 +382,25 @@ function startScanner() {
 
 function initCameraScanner(container) {
     html5QrCode = new Html5Qrcode("reader");
-
-    const qrboxFunction = function(viewfinderWidth, viewfinderHeight) {
+    const qrboxFunction = (viewfinderWidth, viewfinderHeight) => {
         const minEdge = Math.min(viewfinderWidth, viewfinderHeight);
-        const qrboxSize = Math.floor(minEdge * 0.75);
-        return { width: qrboxSize, height: qrboxSize };
-    };
-
-    const config = {
-        fps: 15,
-        qrbox: qrboxFunction,
-        aspectRatio: 1.0
+        return { width: Math.floor(minEdge * 0.75), height: Math.floor(minEdge * 0.75) };
     };
 
     html5QrCode.start(
         { facingMode: "environment" },
-        config,
+        { fps: 15, qrbox: qrboxFunction, aspectRatio: 1.0 },
         (decodedText) => {
             const scannedNumber = decodedText.trim();
             const searchInput = document.getElementById("machine-search-input");
-            if (searchInput) {
-                searchInput.value = scannedNumber;
-            }
+            if (searchInput) searchInput.value = scannedNumber;
             stopScanner();
             findAndSelectMachine(scannedNumber);
         },
         () => {}
     ).catch(err => {
-        console.error("Camera start error:", err);
-        alert("تعذر فتح الكاميرا. يرجى التأكد من إعطاء صلاحية الكاميرا للمتصفح.");
+        console.error("Camera error:", err);
+        alert("تعذر فتح الكاميرا. يرجى إعطاء صلاحية الكاميرا للمتصفح.");
         container.style.display = "none";
     });
 }
@@ -408,11 +409,7 @@ function stopScanner() {
     const container = document.getElementById("scanner-container");
     if (!container) return;
     if (html5QrCode && html5QrCode.isScanning) {
-        html5QrCode.stop().then(() => { 
-            container.style.display = "none"; 
-        }).catch(() => { 
-            container.style.display = "none"; 
-        });
+        html5QrCode.stop().then(() => { container.style.display = "none"; }).catch(() => { container.style.display = "none"; });
     } else {
         container.style.display = "none";
     }
@@ -448,7 +445,7 @@ function startFaultRecord() {
 
     const faults = getStoredFaults();
     faults.push(newFault);
-    saveStoredFaults(faults); // الحفظ السحابي المباشر
+    saveStoredFaults(faults);
 
     document.getElementById("machine-search-input").value = "";
     document.getElementById("machine-info-card").classList.add("hidden");
@@ -478,24 +475,24 @@ function loadFaultsFromStorage() {
         let timeDisplay = elapsedSeconds < 60 ? `${elapsedSeconds} ثانية` : `${Math.floor(elapsedSeconds / 60)} دقيقة و ${elapsedSeconds % 60} ثانية`;
 
         return `
-            <div class="fault-card">
-                <div class="fault-card-header">🔴 ماكينة عطلانة: ${fault.machineNumber || 'غير معروف'}</div>
-                <div class="fault-card-body">
-                    <p><strong>المرحلة:</strong> ${fault.machineStage || '-'}</p>
-                    <p><strong>القسم:</strong> ${fault.machineSection || '-'} (${fault.machineZone || '-'})</p>
-                    <p><strong>العطل:</strong> كود ${fault.faultCode || '-'} — ${fault.faultName || '-'}</p>
-                    <p><strong>وقت البداية:</strong> ${startTimeStr}</p>
-                    <p><strong>مدة التوقف:</strong> <span class="elapsed-time">${timeDisplay}</span></p>
-                    ${fault.notes ? `<p><strong>ملاحظات:</strong> ${fault.notes}</p>` : ""}
+            <div class="fault-card" style="background:#fff; border:1px solid #cbd5e1; padding:12px; border-radius:6px; margin-bottom:10px;">
+                <div class="fault-card-header" style="font-weight:bold; color:#dc2626; margin-bottom:8px;">🔴 ماكينة عطلانة: ${fault.machineNumber || 'غير معروف'}</div>
+                <div class="fault-card-body" style="font-size:13px; color:#334155; margin-bottom:10px;">
+                    <p style="margin:3px 0;"><strong>المرحلة:</strong> ${fault.machineStage || '-'}</p>
+                    <p style="margin:3px 0;"><strong>القسم:</strong> ${fault.machineSection || '-'} (${fault.machineZone || '-'})</p>
+                    <p style="margin:3px 0;"><strong>العطل:</strong> كود ${fault.faultCode || '-'} — ${fault.faultName || '-'}</p>
+                    <p style="margin:3px 0;"><strong>وقت البداية:</strong> ${startTimeStr}</p>
+                    <p style="margin:3px 0;"><strong>مدة التوقف:</strong> <span class="elapsed-time">${timeDisplay}</span></p>
+                    ${fault.notes ? `<p style="margin:3px 0;"><strong>ملاحظات:</strong> ${fault.notes}</p>` : ""}
                 </div>
-                ${!isTechMode ? `<button class="btn btn-danger btn-block" onclick="endFault('${fault.id}')">⏹ انتهاء العطل</button>` : `<button class="btn btn-success btn-block" onclick="endFault('${fault.id}')">✅ تم الإصلاح وإنهاء العطل</button>`}
+                ${!isTechMode ? `<button class="btn btn-danger btn-block" style="width:100%; padding:6px;" onclick="endFault('${fault.id}')">⏹ انتهاء العطل</button>` : `<button class="btn btn-success btn-block" style="width:100%; padding:6px;" onclick="endFault('${fault.id}')">✅ تم الإصلاح وإنهاء العطل</button>`}
             </div>
         `;
     };
 
     if (container) {
         if (activeFaults.length === 0) {
-            container.innerHTML = '<p class="no-data">لا توجد أعطال مفتوحة حالياً.</p>';
+            container.innerHTML = '<p class="no-data" style="color:#64748b;">لا توجد أعطال مفتوحة حالياً.</p>';
         } else {
             let html = "";
             activeFaults.forEach(fault => { html += createFaultCardHTML(fault, false); });
@@ -513,7 +510,7 @@ function loadFaultsFromStorage() {
         const servicesFaults = techActiveFaults.filter(f => [10, 12, 16].includes(Number(f.faultCode)));
 
         const renderCategory = (list) => {
-            if (list.length === 0) return '<p class="no-data">لا توجد أعطال في هذا القسم حالياً.</p>';
+            if (list.length === 0) return '<p class="no-data" style="color:#64748b; font-size:13px;">لا توجد أعطال حالياً.</p>';
             let h = "";
             list.forEach(f => { h += createFaultCardHTML(f, true); });
             return h;
@@ -533,7 +530,7 @@ window.endFault = function(faultId) {
     fault.endTime = Date.now();
     fault.durationMinutes = Number(((fault.endTime - fault.startTime) / 60000).toFixed(3));
     fault.status = "finished";
-    saveStoredFaults(faults); // الحفظ السحابي المباشر
+    saveStoredFaults(faults);
     alert(`تم تسجيل انتهاء العطل. المدة: ${formatDuration(fault.durationMinutes)}`);
 };
 
@@ -541,7 +538,7 @@ window.deleteFault = function(faultId) {
     if (!confirm("هل أنت متأكد من رغبتك في حذف هذا العطل نهائياً؟")) return;
     let faults = getStoredFaults();
     faults = faults.filter(f => f.id !== faultId);
-    saveStoredFaults(faults); // الحفظ السحابي المباشر
+    saveStoredFaults(faults);
     alert("تم حذف العطل بنجاح.");
 };
 
