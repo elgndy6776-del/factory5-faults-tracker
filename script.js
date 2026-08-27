@@ -111,8 +111,10 @@ function setupRealtimeSync() {
         const data = snapshot.val();
         if (data) {
             cachedFaults = Object.values(data);
+            localStorage.setItem("factory5_faults_backup", JSON.stringify(cachedFaults));
         } else {
             cachedFaults = [];
+            // لا نحذف النسخة الاحتياطية تلقائياً؛ الحذف يتم فقط من لوحة الإدارة.
         }
         loadFaultsFromStorage();
         const activeTab = localStorage.getItem("factory5_active_tab") || "tab-indicators";
@@ -148,14 +150,28 @@ function populateFaultCodes() {
 }
 
 function getStoredFaults() {
-    return cachedFaults;
+    // المصدر الأساسي هو Firebase، مع نسخة احتياطية محلية حتى لا تضيع البيانات
+    // إذا تم إغلاق الصفحة أو حدث انقطاع مؤقت في الاتصال.
+    if (Array.isArray(cachedFaults) && cachedFaults.length) return cachedFaults;
+    try {
+        const backup = JSON.parse(localStorage.getItem("factory5_faults_backup") || "[]");
+        return Array.isArray(backup) ? backup : [];
+    } catch (_) {
+        return [];
+    }
 }
 
 function saveStoredFaults(faults) {
+    const safeFaults = Array.isArray(faults) ? faults : [];
+    cachedFaults = safeFaults;
+
+    // نسخة احتياطية محلية: لا يتم مسح الأعطال عند الخروج من الصفحة.
+    localStorage.setItem("factory5_faults_backup", JSON.stringify(safeFaults));
+
     if (!rtdb) return;
     const faultsObj = {};
-    faults.forEach(f => {
-        faultsObj[f.id] = f;
+    safeFaults.forEach(f => {
+        if (f && f.id) faultsObj[f.id] = f;
     });
     rtdb.ref('factory5_faults').set(faultsObj);
 }
@@ -208,16 +224,15 @@ window.switchAdminTab = function(tabId) {
 }
 
 function restoreAdminStateOnLoad() {
-    const isAdminOpen = localStorage.getItem("factory5_admin_open") === "true";
-    const savedTab = localStorage.getItem("factory5_active_tab") || "tab-indicators";
+    // لوحة الإدارة لا تستعيد حالة تسجيل الدخول عند فتح الصفحة من جديد.
+    // كل تبويب/صفحة جديدة يحتاج إدخال كلمة المرور مرة أخرى.
+    localStorage.removeItem("factory5_admin_open");
+    localStorage.removeItem("factory5_active_tab");
 
-    if (isAdminOpen) {
-        const adminPanel = document.getElementById("admin-panel");
-        if (adminPanel) {
-            adminPanel.classList.remove("hidden");
-            switchAdminTab(savedTab);
-        }
-    }
+    const adminPanel = document.getElementById("admin-panel");
+    const loginModal = document.getElementById("login-modal");
+    if (adminPanel) adminPanel.classList.add("hidden");
+    if (loginModal) loginModal.classList.add("hidden");
 }
 
 function setupEventListeners() {
@@ -352,13 +367,19 @@ function setupEventListeners() {
     if (printChartOnlyBtn) printChartOnlyBtn.addEventListener("click", printParetoChartOnly);
 }
 
-function findAndSelectMachine(query) {
+function findAndSelectMachine(query, fromScanner = false) {
     if (!query) {
         alert("من فضلك أدخل رقم الماكينة أولاً");
-        return;
+        return false;
     }
-    const cleanQuery = query.trim();
-    const machine = MACHINES.find(m => m.number === cleanQuery);
+
+    const cleanQuery = String(query).trim();
+    // قراءة الاسكان قد تحتوي على مسافات أو نص إضافي؛ نحاول المطابقة الدقيقة أولاً
+    // ثم نبحث عن رقم ماكينة مسجل داخل النص المقروء.
+    const normalizedQuery = cleanQuery.replace(/\s+/g, '');
+    const machine = MACHINES.find(m => String(m.number).trim() === cleanQuery)
+        || MACHINES.find(m => String(m.number).replace(/\s+/g, '') === normalizedQuery)
+        || MACHINES.find(m => normalizedQuery.includes(String(m.number).replace(/\s+/g, '')));
     const card = document.getElementById("machine-info-card");
     if (machine) {
         selectedMachine = machine;
@@ -367,10 +388,24 @@ function findAndSelectMachine(query) {
         document.getElementById("info-number").textContent = machine.number;
         document.getElementById("info-stage").textContent = machine.stage;
         card.classList.remove("hidden");
+
+        // عند القراءة الصحيحة من الاسكان: يدخل مباشرة لخطوة تسجيل العطل
+        // ويضع المؤشر على قائمة الأعطال بدون كتابة رقم الماكينة يدوياً.
+        if (fromScanner) {
+            const faultSelect = document.getElementById("fault-select");
+            if (faultSelect) {
+                setTimeout(() => {
+                    faultSelect.focus();
+                    faultSelect.scrollIntoView({ behavior: "smooth", block: "center" });
+                }, 150);
+            }
+        }
+        return true;
     } else {
         selectedMachine = null;
         card.classList.add("hidden");
         alert(`رقم الماكينة (${cleanQuery}) غير موجود في قائمة مصنع 5`);
+        return false;
     }
 }
 
@@ -411,7 +446,12 @@ function initCameraScanner(container) {
             if (searchInput) searchInput.value = scannedNumber;
             // أوقف الكاميرا فوراً ثم اختر الماكينة تلقائياً لمنع قراءة نفس الكود أكثر من مرة.
             stopScanner();
-            findAndSelectMachine(scannedNumber);
+            const found = findAndSelectMachine(scannedNumber, true);
+            // إذا كان الرقم من ضمن الماكينات المسجلة، يتم الانتقال مباشرة لخطوة اختيار العطل.
+            if (found) {
+                const registration = document.getElementById("fault-registration-section");
+                if (registration) registration.classList.remove("hidden");
+            }
         },
         () => {}
     ).catch(err => {
@@ -567,8 +607,8 @@ function verifyAdminPassword() {
     if (pass === "205080") {
         document.getElementById("login-modal").classList.add("hidden");
         document.getElementById("admin-panel").classList.remove("hidden");
-        localStorage.setItem("factory5_admin_open", "true");
-        switchAdminTab(localStorage.getItem("factory5_active_tab") || "tab-indicators");
+        // فتح الإدارة للجلسة الحالية فقط، بدون حفظ حالة الدخول في المتصفح.
+        switchAdminTab("tab-indicators");
     } else {
         errorMsg.classList.remove("hidden");
     }
@@ -579,13 +619,13 @@ function updateIndicators() {
     const total = faults.length;
     const active = faults.filter(f => f.status === "active").length;
     const finished = faults.filter(f => f.status === "finished").length;
-    const totalDurationDecimal = faults.reduce((sum, f) => sum + getFaultDurationMinutes(f), 0);
+    const totalDurationSeconds = faults.reduce((sum, f) => sum + getFaultDurationSeconds(f), 0);
 
     const setEl = (id, val) => { const el = document.getElementById(id); if(el) el.textContent = val; };
     setEl("kpi-total", total);
     setEl("kpi-active", active);
     setEl("kpi-finished", finished);
-    setEl("kpi-total-time", formatDuration(totalDurationDecimal));
+    setEl("kpi-total-time", formatDuration(totalDurationSeconds, "seconds"));
 }
 
 function updateMachinesPerformanceTable() {
@@ -593,14 +633,14 @@ function updateMachinesPerformanceTable() {
     const tbody = document.querySelector("#machines-performance-table tbody");
     if (!tbody) return;
     tbody.innerHTML = "";
-    const totalFactoryTime = faults.reduce((sum, f) => sum + getFaultDurationMinutes(f), 0) || 1;
+    const totalFactoryTime = faults.reduce((sum, f) => sum + getFaultDurationSeconds(f), 0) || 1;
 
     MACHINES.forEach(machine => {
         const mFaults = faults.filter(f => f.machineNumber === machine.number);
         const count = mFaults.length;
-        const totalDuration = mFaults.reduce((sum, f) => sum + getFaultDurationMinutes(f), 0);
+        const totalDuration = mFaults.reduce((sum, f) => sum + getFaultDurationSeconds(f), 0);
         const avgDuration = count > 0 ? totalDuration / count : 0;
-        const maxDuration = count > 0 ? Math.max(...mFaults.map(f => getFaultDurationMinutes(f))) : 0;
+        const maxDuration = count > 0 ? Math.max(...mFaults.map(f => getFaultDurationSeconds(f))) : 0;
         const stopRatio = ((totalDuration / totalFactoryTime) * 100).toFixed(1);
 
         const tr = document.createElement("tr");
@@ -610,9 +650,9 @@ function updateMachinesPerformanceTable() {
             <td>${machine.zone}</td>
             <td>${machine.section}</td>
             <td>${count}</td>
-            <td>${formatDuration(totalDuration)}</td>
-            <td>${formatDuration(avgDuration)}</td>
-            <td>${formatDuration(maxDuration)}</td>
+            <td>${formatDuration(totalDuration, "seconds")}</td>
+            <td>${formatDuration(avgDuration, "seconds")}</td>
+            <td>${formatDuration(maxDuration, "seconds")}</td>
             <td>${stopRatio}%</td>
         `;
         tbody.appendChild(tr);
@@ -639,15 +679,15 @@ function applyAdvancedSearch() {
     const count = filtered.length;
     const finished = filtered.filter(f => f.status === "finished").length;
     const active = filtered.filter(f => f.status === "active").length;
-    const totalDuration = filtered.reduce((sum, f) => sum + getFaultDurationMinutes(f), 0);
+    const totalDuration = filtered.reduce((sum, f) => sum + getFaultDurationSeconds(f), 0);
 
     const setEl = (id, val) => { const el = document.getElementById(id); if(el) el.textContent = val; };
     setEl("res-count", count);
     setEl("res-finished", finished);
     setEl("res-active", active);
-    setEl("res-total-duration", formatDuration(totalDuration));
-    setEl("res-avg-duration", formatDuration(count > 0 ? totalDuration / count : 0));
-    setEl("res-max-duration", formatDuration(count > 0 ? Math.max(...filtered.map(f => getFaultDurationMinutes(f))) : 0));
+    setEl("res-total-duration", formatDuration(totalDuration, "seconds"));
+    setEl("res-avg-duration", formatDuration(count > 0 ? totalDuration / count : 0, "seconds"));
+    setEl("res-max-duration", formatDuration(count > 0 ? Math.max(...filtered.map(f => getFaultDurationSeconds(f))) : 0, "seconds"));
     
     document.getElementById("search-results-summary").classList.remove("hidden");
 
@@ -700,7 +740,7 @@ function updateParetoTable() {
         cumulativeDurationPercent += durationRatio;
 
         chartLabels.push(`كود ${item.code}: ${item.name}`);
-        chartDurations.push(Number((item.duration / 60).toFixed(3)));
+        chartDurations.push(Number(item.duration.toFixed(3)));
         chartCumulative.push(Number(cumulativeDurationPercent.toFixed(1)));
 
         const tr = document.createElement("tr");
@@ -729,7 +769,7 @@ function renderParetoChart(labels, durations, cumulative) {
         data: {
             labels: labels,
             datasets: [
-                { label: 'وقت التوقف (بالدقائق)', data: durations, backgroundColor: 'rgba(37, 99, 235, 0.7)', yAxisID: 'y' },
+                { label: 'وقت التوقف (بالثواني)', data: durations, backgroundColor: 'rgba(37, 99, 235, 0.7)', yAxisID: 'y' },
                 { label: 'النسبة التراكمية (%)', data: cumulative, type: 'line', borderColor: 'rgba(220, 38, 38, 1)', yAxisID: 'y1', fill: false }
             ]
         },
