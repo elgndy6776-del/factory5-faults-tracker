@@ -235,6 +235,20 @@ body {
     overflow: hidden;
 }
 
+
+.scanner-help {
+    max-width: 650px;
+    margin: 0 auto 10px;
+    padding: 10px 12px;
+    background: #ecfdf5;
+    border: 1px solid #86efac;
+    border-radius: 8px;
+    color: #166534;
+    text-align: center;
+    font-weight: 700;
+    font-size: 0.92rem;
+}
+
 /* شبكة الأعطال الحالية */
 .faults-grid {
     display: grid;
