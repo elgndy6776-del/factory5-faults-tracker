@@ -458,73 +458,301 @@ function startScanner() {
 
 let ocrTimer = null;
 let ocrBusy = false;
+let ocrWorker = null;
+let ocrWorkerPromise = null;
 
-function startNumberOCRFallback() {
+function normalizeMachineDigits(text) {
+    return String(text || '')
+        .replace(/[OoQq]/g, '0')
+        .replace(/[IiLl|]/g, '1')
+        .replace(/[Ss]/g, '5')
+        .replace(/[Gg]/g, '6')
+        .replace(/[Bb]/g, '8')
+        .replace(/[Zz]/g, '2');
+}
+
+function makeOcrCanvases(video) {
+    const vw = video.videoWidth;
+    const vh = video.videoHeight;
+    if (!vw || !vh) return [];
+
+    const regions = [];
+
+    // اللافتات عندكم خضراء بإطار أصفر. نبحث عن أكبر منطقة متصلة بهذا اللون
+    // بدلاً من الاعتماد على مكان ثابت داخل الكاميرا؛ وبالتالي لو قربت الموبايل
+    // أو ميلته قليلاً سنظل قادرين على تحديد اللافتة.
+    try {
+        const probe = document.createElement('canvas');
+        const pw = 160;
+        const ph = Math.max(100, Math.round(pw * vh / vw));
+        probe.width = pw;
+        probe.height = ph;
+        const pctx = probe.getContext('2d', { willReadFrequently: true });
+        pctx.drawImage(video, 0, 0, pw, ph);
+        const pd = pctx.getImageData(0, 0, pw, ph).data;
+        const mask = new Uint8Array(pw * ph);
+
+        for (let y = 0; y < ph; y++) {
+            for (let x = 0; x < pw; x++) {
+                const i = (y * pw + x) * 4;
+                const r = pd[i], g = pd[i + 1], b = pd[i + 2];
+                const green = g > 65 && g > r * 1.18 && g > b * 1.10;
+                const yellow = r > 120 && g > 105 && b < 125 && Math.abs(r - g) < 95;
+                mask[y * pw + x] = (green || yellow) ? 1 : 0;
+            }
+        }
+
+        // Connected components على صورة صغيرة جداً حتى تكون العملية خفيفة على الموبايل.
+        const seen = new Uint8Array(pw * ph);
+        let best = null;
+        const queue = new Int32Array(pw * ph);
+
+        for (let sy = 0; sy < ph; sy++) {
+            for (let sx = 0; sx < pw; sx++) {
+                const seed = sy * pw + sx;
+                if (!mask[seed] || seen[seed]) continue;
+
+                let head = 0, tail = 0;
+                queue[tail++] = seed;
+                seen[seed] = 1;
+                let area = 0, minX = sx, minY = sy, maxX = sx, maxY = sy;
+
+                while (head < tail) {
+                    const pos = queue[head++];
+                    const x = pos % pw;
+                    const y = Math.floor(pos / pw);
+                    area++;
+                    if (x < minX) minX = x;
+                    if (x > maxX) maxX = x;
+                    if (y < minY) minY = y;
+                    if (y > maxY) maxY = y;
+
+                    for (let dy = -1; dy <= 1; dy++) {
+                        for (let dx = -1; dx <= 1; dx++) {
+                            if (dx === 0 && dy === 0) continue;
+                            const nx = x + dx, ny = y + dy;
+                            if (nx < 0 || ny < 0 || nx >= pw || ny >= ph) continue;
+                            const np = ny * pw + nx;
+                            if (mask[np] && !seen[np]) {
+                                seen[np] = 1;
+                                queue[tail++] = np;
+                            }
+                        }
+                    }
+                }
+
+                const boxW = maxX - minX + 1;
+                const boxH = maxY - minY + 1;
+                const ratio = boxW / Math.max(1, boxH);
+                if (area > 180 && boxW > pw * 0.25 && ratio > 1.35 && (!best || area > best.area)) {
+                    best = { area, minX, minY, maxX, maxY };
+                }
+            }
+        }
+
+        if (best) {
+            const boxW = best.maxX - best.minX + 1;
+            const boxH = best.maxY - best.minY + 1;
+            const padX = Math.round(boxW * 0.10);
+            const padY = Math.round(boxH * 0.35);
+            const x = Math.max(0, best.minX - padX);
+            const y = Math.max(0, best.minY - padY);
+            const right = Math.min(pw, best.maxX + 1 + padX);
+            const bottom = Math.min(ph, best.maxY + 1 + padY);
+            regions.push({ x: x / pw, y: y / ph, w: (right - x) / pw, h: (bottom - y) / ph });
+        }
+    } catch (_) {}
+
+    // احتياطي إذا لم نستطع تحديد اللافتة بالألوان.
+    if (!regions.length) {
+        regions.push(
+            { x: 0.04, y: 0.04, w: 0.92, h: 0.56 },
+            { x: 0.04, y: 0.20, w: 0.92, h: 0.70 }
+        );
+    }
+
+    const canvases = [];
+    for (const region of regions) {
+        const sx = Math.max(0, Math.floor(vw * region.x));
+        const sy = Math.max(0, Math.floor(vh * region.y));
+        const sw = Math.min(vw - sx, Math.floor(vw * region.w));
+        const sh = Math.min(vh - sy, Math.floor(vh * region.h));
+        if (sw < 80 || sh < 40) continue;
+
+        // تكبير الصورة 2.5x قبل OCR؛ مهم جداً عند التصوير من مسافة.
+        const scale = 2.5;
+        const base = document.createElement('canvas');
+        base.width = Math.floor(sw * scale);
+        base.height = Math.floor(sh * scale);
+        const ctx = base.getContext('2d', { willReadFrequently: true });
+        ctx.imageSmoothingEnabled = true;
+        ctx.drawImage(video, sx, sy, sw, sh, 0, 0, base.width, base.height);
+
+        const image = ctx.getImageData(0, 0, base.width, base.height);
+        const d = image.data;
+        const gray = new Uint8ClampedArray(base.width * base.height);
+        let min = 255, max = 0;
+
+        for (let i = 0, j = 0; i < d.length; i += 4, j++) {
+            const r = d[i], g = d[i + 1], b = d[i + 2];
+            // تقليل تأثير اللون الأخضر مع إبقاء الأرقام السوداء واضحة.
+            const y = Math.round(0.50 * r + 0.32 * g + 0.18 * b);
+            gray[j] = y;
+            if (y < min) min = y;
+            if (y > max) max = y;
+        }
+
+        const range = Math.max(1, max - min);
+        const stretched = new Uint8ClampedArray(gray.length);
+        const binary = new Uint8ClampedArray(gray.length);
+        const dark = new Uint8ClampedArray(gray.length);
+        const t1 = min + range * 0.56;
+        const t2 = min + range * 0.40;
+
+        for (let i = 0; i < gray.length; i++) {
+            stretched[i] = Math.max(0, Math.min(255, ((gray[i] - min) * 255) / range));
+            binary[i] = gray[i] < t1 ? 0 : 255;
+            dark[i] = gray[i] < t2 ? 0 : 255;
+        }
+
+        for (const source of [stretched, binary, dark]) {
+            const out = document.createElement('canvas');
+            out.width = base.width;
+            out.height = base.height;
+            const octx = out.getContext('2d', { willReadFrequently: true });
+            const outImage = octx.createImageData(out.width, out.height);
+            for (let i = 0, j = 0; i < outImage.data.length; i += 4, j++) {
+                const v = source[j];
+                outImage.data[i] = v;
+                outImage.data[i + 1] = v;
+                outImage.data[i + 2] = v;
+                outImage.data[i + 3] = 255;
+            }
+            octx.putImageData(outImage, 0, 0);
+            canvases.push(out);
+        }
+    }
+    return canvases;
+}
+
+async function getOcrWorker() {
+    if (typeof Tesseract === 'undefined') return null;
+    if (ocrWorker) return ocrWorker;
+    if (ocrWorkerPromise) return ocrWorkerPromise;
+
+    ocrWorkerPromise = (async () => {
+        try {
+            // Worker واحد بدلاً من إنشاء OCR جديد كل مرة: أسرع وأثبت على الموبايل.
+            const worker = await Tesseract.createWorker('eng', 1, { logger: () => {} });
+            await worker.setParameters({
+                tessedit_char_whitelist: '0123456789',
+                tessedit_pageseg_mode: '7',
+                preserve_interword_spaces: '0'
+            });
+            ocrWorker = worker;
+            return worker;
+        } catch (err) {
+            console.warn('OCR worker init error:', err);
+            ocrWorkerPromise = null;
+            return null;
+        }
+    })();
+    return ocrWorkerPromise;
+}
+
+async function startNumberOCRFallback() {
     if (ocrTimer) clearInterval(ocrTimer);
-    // OCR يعمل كخطة بديلة للأرقام المطبوعة العادية التي ليست QR أو باركود.
-    ocrTimer = setInterval(async () => {
-        if (ocrBusy || !html5QrCode || !html5QrCode.isScanning || typeof Tesseract === "undefined") return;
+
+    const runOCR = async () => {
+        if (ocrBusy || !html5QrCode || !html5QrCode.isScanning || typeof Tesseract === 'undefined') return;
         const video = document.querySelector('#reader video');
         if (!video || !video.videoWidth || !video.videoHeight) return;
 
         ocrBusy = true;
         try {
-            setScannerStatus("جاري التعرف على رقم الماكينة...");
-            const canvas = document.createElement('canvas');
-            const scale = Math.min(1, 900 / video.videoWidth);
-            canvas.width = Math.max(1, Math.floor(video.videoWidth * scale));
-            canvas.height = Math.max(1, Math.floor(video.videoHeight * scale));
-            const ctx = canvas.getContext('2d', { willReadFrequently: true });
-            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            setScannerStatus('جاري تحسين الصورة والتعرف على رقم الماكينة...');
+            const worker = await getOcrWorker();
+            if (!worker) return;
 
-            const result = await Tesseract.recognize(canvas, 'eng', {
-                logger: () => {},
-                tessedit_char_whitelist: '0123456789'
-            });
-            const text = (result && result.data && result.data.text || '').replace(/[^0-9\s]/g, ' ').trim();
-            if (text && selectScannedMachine(text, 'ocr')) return;
-            setScannerStatus("لم يتم التعرف بعد... ثبّت الكاميرا على رقم الماكينة بوضوح.");
+            const canvases = makeOcrCanvases(video);
+            for (const canvas of canvases) {
+                const result = await worker.recognize(canvas);
+                const rawText = result && result.data ? result.data.text || '' : '';
+                const text = normalizeMachineDigits(rawText).replace(/[^0-9\s]/g, ' ').trim();
+                if (text && selectScannedMachine(text, 'ocr')) return;
+            }
+            setScannerStatus('لم يتم التعرف بعد... قرّب الكاميرا وثبّتها على الرقم داخل الإطار.');
         } catch (err) {
             console.warn('OCR error:', err);
         } finally {
             ocrBusy = false;
         }
-    }, 2200);
+    };
+
+    // أول محاولة بسرعة، ثم إعادة المحاولة كل 1.5 ثانية بدون إرهاق الهاتف.
+    runOCR();
+    ocrTimer = setInterval(runOCR, 1500);
+}
+
+function applyCameraFocus() {
+    try {
+        if (!html5QrCode || typeof html5QrCode.applyVideoConstraints !== 'function') return;
+        html5QrCode.applyVideoConstraints({
+            advanced: [
+                { focusMode: 'continuous' },
+                { exposureMode: 'continuous' },
+                { whiteBalanceMode: 'continuous' }
+            ]
+        }).catch(() => {});
+    } catch (_) {}
 }
 
 function initCameraScanner(container) {
-    html5QrCode = new Html5Qrcode("reader");
+    if (html5QrCode) {
+        try { html5QrCode.clear(); } catch (_) {}
+    }
+    html5QrCode = new Html5Qrcode('reader');
     const qrboxFunction = (viewfinderWidth, viewfinderHeight) => {
-        const minEdge = Math.min(viewfinderWidth, viewfinderHeight);
-        return { width: Math.floor(minEdge * 0.85), height: Math.floor(minEdge * 0.55) };
+        // مساحة أكبر من النسخة القديمة حتى لا يتم قص لافتة 5003/5004.
+        const width = Math.floor(viewfinderWidth * 0.94);
+        const height = Math.floor(Math.min(viewfinderHeight * 0.62, width * 0.50));
+        return { width: Math.max(220, width), height: Math.max(120, height) };
     };
 
-    const F = typeof Html5QrcodeSupportedFormats !== "undefined" ? Html5QrcodeSupportedFormats : {};
+    const F = typeof Html5QrcodeSupportedFormats !== 'undefined' ? Html5QrcodeSupportedFormats : {};
     const formats = [
         F.QR_CODE, F.CODE_128, F.CODE_39, F.CODE_93,
         F.EAN_13, F.EAN_8, F.UPC_A, F.UPC_E
     ].filter(Boolean);
 
+    const onCode = (decodedText) => {
+        if (selectScannedMachine(normalizeMachineDigits(decodedText), 'code')) return;
+        setScannerStatus('تمت القراءة لكن الرقم غير موجود في قائمة الماكينات.');
+    };
+
     html5QrCode.start(
-        { facingMode: { exact: "environment" } },
+        { facingMode: { exact: 'environment' } },
         { fps: 12, qrbox: qrboxFunction, aspectRatio: 1.5, formatsToSupport: formats },
-        (decodedText) => {
-            if (selectScannedMachine(decodedText, 'code')) return;
-            setScannerStatus("تمت القراءة لكن الرقم غير موجود في قائمة الماكينات.");
-        },
+        onCode,
         () => {}
-    ).then(() => startNumberOCRFallback()).catch(() => {
+    ).then(() => {
+        applyCameraFocus();
+        startNumberOCRFallback();
+    }).catch(() => {
         // بعض الهواتف لا تدعم exact، فنرجع للوضع العام للكاميرا الخلفية.
         return html5QrCode.start(
-            { facingMode: "environment" },
+            { facingMode: 'environment' },
             { fps: 12, qrbox: qrboxFunction, aspectRatio: 1.5, formatsToSupport: formats },
-            (decodedText) => selectScannedMachine(decodedText, 'code'),
+            onCode,
             () => {}
-        ).then(() => startNumberOCRFallback());
+        ).then(() => {
+            applyCameraFocus();
+            startNumberOCRFallback();
+        });
     }).catch(err => {
-        console.error("Camera error:", err);
-        alert("تعذر فتح الكاميرا. يرجى إعطاء صلاحية الكاميرا للمتصفح وفتح الموقع عبر HTTPS.");
-        container.style.display = "none";
+        console.error('Camera error:', err);
+        alert('تعذر فتح الكاميرا. يرجى إعطاء صلاحية الكاميرا للمتصفح وفتح الموقع عبر HTTPS.');
+        container.style.display = 'none';
     });
 }
 
@@ -589,6 +817,7 @@ function loadFaultsFromStorage() {
     const techCatElectricity = document.getElementById("tech-cat-electricity");
     const techCatMachines = document.getElementById("tech-cat-machines");
     const techCatMechanics = document.getElementById("tech-cat-mechanics");
+    const techCatAir = document.getElementById("tech-cat-air");
     const techCatServices = document.getElementById("tech-cat-services");
     
     if (!container && !techCatElectricity) return;
@@ -626,14 +855,15 @@ function loadFaultsFromStorage() {
         }
     }
 
-    if (techCatElectricity && techCatMachines && techCatMechanics && techCatServices) {
+    if (techCatElectricity && techCatMachines && techCatMechanics && techCatAir && techCatServices) {
         const excludedCodes = [3, 7, 8, 9, 11, 14, 15, 17];
         const techActiveFaults = activeFaults.filter(f => !excludedCodes.includes(Number(f.faultCode)));
 
-        const electricityFaults = techActiveFaults.filter(f => Number(f.faultCode) === 5);
+        const electricityFaults = techActiveFaults.filter(f => [5, 12].includes(Number(f.faultCode)));
         const machinesFaults = techActiveFaults.filter(f => [1, 2].includes(Number(f.faultCode)));
-        const mechanicsFaults = techActiveFaults.filter(f => [4, 6, 13].includes(Number(f.faultCode)));
-        const servicesFaults = techActiveFaults.filter(f => [10, 12, 16].includes(Number(f.faultCode)));
+        const mechanicsFaults = techActiveFaults.filter(f => [4, 13].includes(Number(f.faultCode)));
+        const airFaults = techActiveFaults.filter(f => Number(f.faultCode) === 6);
+        const servicesFaults = techActiveFaults.filter(f => [10, 16].includes(Number(f.faultCode)));
 
         const renderCategory = (list) => {
             if (list.length === 0) return '<p class="no-data" style="color:#64748b; font-size:13px;">لا توجد أعطال حالياً.</p>';
@@ -645,6 +875,7 @@ function loadFaultsFromStorage() {
         techCatElectricity.innerHTML = renderCategory(electricityFaults);
         techCatMachines.innerHTML = renderCategory(machinesFaults);
         techCatMechanics.innerHTML = renderCategory(mechanicsFaults);
+        techCatAir.innerHTML = renderCategory(airFaults);
         techCatServices.innerHTML = renderCategory(servicesFaults);
     }
 }
