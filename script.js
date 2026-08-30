@@ -859,11 +859,42 @@ function loadFaultsFromStorage() {
         const excludedCodes = [3, 7, 8, 9, 11, 14, 15, 17];
         const techActiveFaults = activeFaults.filter(f => !excludedCodes.includes(Number(f.faultCode)));
 
-        const electricityFaults = techActiveFaults.filter(f => [5, 12].includes(Number(f.faultCode)));
-        const machinesFaults = techActiveFaults.filter(f => [1, 2].includes(Number(f.faultCode)));
-        const mechanicsFaults = techActiveFaults.filter(f => [4, 13].includes(Number(f.faultCode)));
-        const airFaults = techActiveFaults.filter(f => Number(f.faultCode) === 6);
-        const servicesFaults = techActiveFaults.filter(f => [10, 16].includes(Number(f.faultCode)));
+        // توزيع أعطال شاشات الفنيين بشكل حصري: كل كود له شاشة واحدة فقط.
+        // مهم: الكود 12 يتبع صيانة الكهرباء، وليس أمن وأوناش.
+        const electricityCodes = new Set([5, 12]);
+        const machinesCodes = new Set([1, 2]);
+        const mechanicsCodes = new Set([4, 13]);
+        const airCodes = new Set([6]);
+        const servicesCodes = new Set([10, 16]);
+
+        const getTechCategory = (faultCode) => {
+            const code = Number(faultCode);
+            if (electricityCodes.has(code)) return 'electricity';
+            if (machinesCodes.has(code)) return 'machines';
+            if (mechanicsCodes.has(code)) return 'mechanics';
+            if (airCodes.has(code)) return 'air';
+            if (servicesCodes.has(code)) return 'services';
+            return null;
+        };
+
+        // كل عطل يُضاف لقائمة واحدة فقط حسب الكود، لمنع ظهور نفس العطل في شاشتين.
+        const categoryLists = {
+            electricity: [],
+            machines: [],
+            mechanics: [],
+            air: [],
+            services: []
+        };
+        techActiveFaults.forEach(fault => {
+            const category = getTechCategory(fault.faultCode);
+            if (category) categoryLists[category].push(fault);
+        });
+
+        const electricityFaults = categoryLists.electricity;
+        const machinesFaults = categoryLists.machines;
+        const mechanicsFaults = categoryLists.mechanics;
+        const airFaults = categoryLists.air;
+        const servicesFaults = categoryLists.services;
 
         const renderCategory = (list) => {
             if (list.length === 0) return '<p class="no-data" style="color:#64748b; font-size:13px;">لا توجد أعطال حالياً.</p>';
