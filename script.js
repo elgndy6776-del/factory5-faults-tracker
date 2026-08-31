@@ -368,6 +368,7 @@ document.addEventListener("DOMContentLoaded", () => {
     initClock();
     populateFaultCodes();
     setupRealtimeSync();
+    setupLiveFaultRefresh();
     setupServerClockSync();
     setupMachineSync();
     setupFaultCodesSync();
@@ -376,30 +377,70 @@ document.addEventListener("DOMContentLoaded", () => {
     restoreAdminStateOnLoad();
 });
 
+// مزامنة فورية إضافية للأعطال المفتوحة: تعتمد على Firebase مباشرة
+// مع الاحتفاظ بالـ on(value) الأساسي. هذا يضمن أن شاشة الفنيين وشاشة العامل
+// تتحدث حتى لو تأخر حدث Firebase في المتصفح أو كان هناك تبويب قديم.
+let liveFaultPollTimer = null;
+let liveFaultLastSignature = "";
+function setupLiveFaultRefresh() {
+    if (!rtdb || liveFaultPollTimer) return;
+    const refresh = () => {
+        rtdb.ref('factory5_faults').once('value').then(snapshot => {
+            const data = snapshot.val();
+            const next = data && typeof data === 'object' ? Object.values(data) : [];
+            const signature = JSON.stringify(next.map(f => ({
+                id: f && f.id, status: f && f.status, startTime: f && f.startTime,
+                endTime: f && f.endTime, durationSeconds: f && f.durationSeconds
+            })).sort((a,b) => String(a.id).localeCompare(String(b.id))));
+            if (signature !== liveFaultLastSignature) {
+                liveFaultLastSignature = signature;
+                applyFirebaseFaultSnapshot(data);
+            }
+        }).catch(() => {});
+    };
+    refresh();
+    liveFaultPollTimer = setInterval(refresh, 1000);
+}
+
+function applyFirebaseFaultSnapshot(data) {
+    firebaseFaultsSyncReady = true;
+    cachedFaults = data && typeof data === 'object' ? Object.values(data) : [];
+    // Firebase هو المصدر الموحد بين كل الأجهزة؛ النسخة المحلية مجرد احتياطية.
+    localStorage.setItem("factory5_faults_backup", JSON.stringify(cachedFaults));
+
+    // تحديث واجهة العامل وشاشات الفنيين فورًا من نفس البيانات القادمة من Firebase.
+    loadFaultsFromStorage();
+    renderTechDashboard();
+    updateLiveFaultDurations();
+
+    const activeTab = sessionStorage.getItem("factory5_active_tab") || "tab-indicators";
+    const adminPanel = document.getElementById("admin-panel");
+    if (adminPanel && !adminPanel.classList.contains("hidden")) {
+        if (activeTab === "tab-indicators") updateIndicators();
+        else if (activeTab === "tab-machines") updateMachinesPerformanceTable();
+        else if (activeTab === "tab-machine-management") updateMachineManagementTable();
+        else if (activeTab === "tab-pareto") updateParetoTable();
+        else if (activeTab === "tab-logs") updateFullLogsTable();
+    }
+}
+
 function setupRealtimeSync() {
     if (!rtdb) return;
-    rtdb.ref('factory5_faults').on('value', (snapshot) => {
-        const data = snapshot.val();
-        firebaseFaultsSyncReady = true;
-        if (data) {
-            cachedFaults = Object.values(data);
-            localStorage.setItem("factory5_faults_backup", JSON.stringify(cachedFaults));
-        } else {
-            cachedFaults = [];
-            // لا نحذف النسخة الاحتياطية تلقائياً؛ الحذف يتم فقط من لوحة الإدارة.
-        }
-        loadFaultsFromStorage();
-        // تحديث شاشة العامل وشاشات الفنيين فور وصول أي تغيير من Firebase، بدون Refresh.
-        loadFaultsFromStorage();
-        const activeTab = sessionStorage.getItem("factory5_active_tab") || "tab-indicators";
-        if (document.getElementById("admin-panel") && !document.getElementById("admin-panel").classList.contains("hidden")) {
-            if (activeTab === "tab-indicators") updateIndicators();
-            else if (activeTab === "tab-machines") updateMachinesPerformanceTable();
-            else if (activeTab === "tab-machine-management") updateMachineManagementTable();
-            else if (activeTab === "tab-pareto") updateParetoTable();
-            else if (activeTab === "tab-logs") updateFullLogsTable();
-        }
+    const faultsRef = rtdb.ref('factory5_faults');
+
+    // المستمع الأساسي: أي تغيير في أي عطل يعيد رسم الواجهات فورًا.
+    faultsRef.on('value', (snapshot) => {
+        applyFirebaseFaultSnapshot(snapshot.val());
     });
+
+    // مستمعون إضافيون على مستوى العطل نفسه لضمان التحديث الفوري حتى مع تبويب/متصفح
+    // يتأخر في معالجة حدث value. هذه الأحداث لا تكتب أي بيانات؛ فقط تعيد الرسم.
+    const refreshFromFirebase = () => {
+        faultsRef.once('value').then(snapshot => applyFirebaseFaultSnapshot(snapshot.val())).catch(() => {});
+    };
+    faultsRef.on('child_added', refreshFromFirebase);
+    faultsRef.on('child_changed', refreshFromFirebase);
+    faultsRef.on('child_removed', refreshFromFirebase);
 }
 
 function getStoredMachines() {
