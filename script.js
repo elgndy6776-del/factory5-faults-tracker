@@ -77,7 +77,7 @@ const DEFAULT_MACHINES = [
 let MACHINES = [...DEFAULT_MACHINES];
 let machineSyncReady = false;
 
-const FAULT_CODES = [
+let FAULT_CODES = [
     { code: 1, name: "صيانه الماكينه" },
     { code: 2, name: "الصيانه الوقائية" },
     { code: 3, name: "ضبط الماكينه / بداية تشغيل" },
@@ -97,10 +97,270 @@ const FAULT_CODES = [
     { code: 17, name: "انقطاع كهرباء" }
 ];
 
+
+// إعدادات شاشات الفنيين - تحفظ التوزيع الحالي كما هو، وتسمح للإدارة بتعديله لاحقًا.
+const DEFAULT_TECH_SCREENS = [
+    { id: 'electricity', name: '⚡ صيانة الكهرباء', codes: [5, 12] },
+    { id: 'machines', name: '⚙️ صيانة الماكينات', codes: [1, 2] },
+    { id: 'mechanics', name: '🔧 ورشة العدة', codes: [4, 13] },
+    { id: 'air', name: '💨 صيانة الهواء', codes: [6] },
+    { id: 'services', name: '🏗️ أمن وأوناش', codes: [10, 16] },
+    { id: 'other', name: '🧰 أعطال فنية أخرى / أكواد جديدة', codes: [] }
+];
+let TECH_SCREENS = DEFAULT_TECH_SCREENS.map(x => ({...x, codes:[...x.codes]}));
+let techScreensSyncReady = false;
+function cloneDefaultTechScreens(){ return DEFAULT_TECH_SCREENS.map(x=>({...x,codes:[...x.codes]})); }
+function getStoredTechScreens(){
+    try {
+        const saved=JSON.parse(localStorage.getItem('factory5_tech_screens_backup')||'null');
+        if(Array.isArray(saved)&&saved.length) return saved.map((x,i)=>({id:String(x.id||('screen_'+i)),name:String(x.name||'شاشة فنيين'),codes:Array.isArray(x.codes)?x.codes.map(Number).filter(Number.isFinite):[]}));
+    } catch(_){ }
+    return cloneDefaultTechScreens();
+}
+function saveTechScreensLocal(list){ localStorage.setItem('factory5_tech_screens_backup',JSON.stringify(list)); }
+function populateTechScreenCodeSelector(){
+    const sel=document.getElementById('admin-tech-screen-codes'); if(!sel) return;
+    sel.innerHTML='';
+    FAULT_CODES.slice().sort((a,b)=>a.code-b.code).forEach(f=>{ const o=document.createElement('option'); o.value=f.code; o.textContent=`كود ${f.code} — ${f.name}`; sel.appendChild(o); });
+}
+function renderTechScreenManagementTable(){
+    const tb=document.querySelector('#tech-screens-management-table tbody'); if(!tb) return;
+    tb.innerHTML='';
+    TECH_SCREENS.forEach(sc=>{ const tr=document.createElement('tr'); tr.innerHTML=`<td>${sc.name}</td><td>${sc.codes.length?sc.codes.join('، '):'بدون أكواد'}</td><td><button class="btn btn-secondary" onclick="editTechScreen('${sc.id}')">✏️ تعديل</button></td>`; tb.appendChild(tr); });
+}
+function setupTechScreensSync(){
+    TECH_SCREENS=getStoredTechScreens(); saveTechScreensLocal(TECH_SCREENS); techScreensSyncReady=true; populateTechScreenCodeSelector(); renderTechScreenManagementTable(); renderTechDashboard();
+    if(!rtdb) return;
+    rtdb.ref('factory5_tech_screens').on('value',snap=>{
+        const v=snap.val();
+        if(v && typeof v==='object'){
+            const list=Array.isArray(v)?v:Object.keys(v).sort().map(k=>v[k]);
+            if(list.length){ TECH_SCREENS=list.map((x,i)=>({id:String(x.id||('screen_'+i)),name:String(x.name||'شاشة فنيين'),codes:Array.isArray(x.codes)?x.codes.map(Number).filter(Number.isFinite):[]})); saveTechScreensLocal(TECH_SCREENS); populateTechScreenCodeSelector(); renderTechScreenManagementTable(); renderTechDashboard(); }
+        }
+    });
+}
+function saveTechScreens(list){
+    TECH_SCREENS=list.map(x=>({id:String(x.id),name:String(x.name||'شاشة فنيين'),codes:[...new Set((x.codes||[]).map(Number).filter(Number.isFinite))]}));
+    saveTechScreensLocal(TECH_SCREENS); populateTechScreenCodeSelector(); renderTechScreenManagementTable(); renderTechDashboard();
+    if(rtdb) { const obj={}; TECH_SCREENS.forEach(x=>obj[x.id]=x); rtdb.ref('factory5_tech_screens').set(obj); }
+}
+function clearTechScreenForm(){
+    const id=document.getElementById('tech-screen-edit-id');
+    const name=document.getElementById('admin-tech-screen-name');
+    const sel=document.getElementById('admin-tech-screen-codes');
+    const title=document.getElementById('tech-screen-form-title');
+    const del=document.getElementById('delete-tech-screen-btn');
+    if(id) id.value='';
+    if(name) name.value='';
+    if(sel) [...sel.options].forEach(o=>o.selected=false);
+    if(title) title.textContent='➕ إضافة / تعديل شاشة';
+    if(del) del.style.display='none';
+}
+window.editTechScreen=function(id){
+    const sc=TECH_SCREENS.find(x=>String(x.id)===String(id)); if(!sc)return;
+    document.getElementById('tech-screen-edit-id').value=sc.id;
+    document.getElementById('admin-tech-screen-name').value=sc.name.replace(/^[^ء-ي٠-٩]*\s*/,'');
+    const sel=document.getElementById('admin-tech-screen-codes');
+    [...sel.options].forEach(o=>o.selected=sc.codes.includes(Number(o.value)));
+    document.getElementById('tech-screen-form-title').textContent=`✏️ تعديل شاشة: ${sc.name}`;
+    const del=document.getElementById('delete-tech-screen-btn'); if(del) del.style.display='inline-block';
+};
+function saveTechScreenFromAdmin(){
+    const id=document.getElementById('tech-screen-edit-id').value.trim();
+    const name=document.getElementById('admin-tech-screen-name').value.trim();
+    const sel=document.getElementById('admin-tech-screen-codes');
+    if(!name){ alert('اكتب اسم الشاشة أولاً.'); return; }
+    const codes=[...sel.selectedOptions].map(o=>Number(o.value));
+    if(id){
+        const next=TECH_SCREENS.map(sc=>({ ...sc, codes: sc.id===id ? codes : sc.codes.filter(c=>!codes.includes(Number(c))) }));
+        saveTechScreens(next);
+        document.getElementById('tech-screen-management-status').textContent='✅ تم تعديل الشاشة وتوزيع الأكواد ومزامنتها مع واجهة الفنيين.';
+    }else{
+        let newId='screen_'+Date.now()+'_'+Math.random().toString(36).slice(2,8);
+        const next=TECH_SCREENS.map(sc=>({ ...sc, codes: sc.codes.filter(c=>!codes.includes(Number(c))) }));
+        next.push({id:newId,name,codes:[...new Set(codes)]});
+        saveTechScreens(next);
+        document.getElementById('tech-screen-management-status').textContent='✅ تم إضافة الشاشة الجديدة وتوزيع الأكواد ومزامنتها مع واجهة الفنيين.';
+    }
+    clearTechScreenForm();
+}
+function deleteTechScreenFromAdmin(){
+    const id=document.getElementById('tech-screen-edit-id').value.trim();
+    const sc=TECH_SCREENS.find(x=>String(x.id)===String(id));
+    if(!id||!sc)return;
+    if(!confirm(`هل تريد حذف شاشة «${sc.name}»؟\nسيتم حذف الشاشة فقط، ولن يتم حذف أي عطل أو كود أو بيانات تاريخية.`))return;
+    saveTechScreens(TECH_SCREENS.filter(x=>String(x.id)!==String(id)));
+    clearTechScreenForm();
+    document.getElementById('tech-screen-management-status').textContent='🗑️ تم حذف الشاشة فقط، وجميع الأكواد والأعطال التاريخية محفوظة.';
+}
+function resetTechScreens(){ if(!confirm('استرجاع توزيع شاشات الفنيين الأصلي؟'))return; saveTechScreens(cloneDefaultTechScreens()); clearTechScreenForm(); document.getElementById('tech-screen-management-status').textContent='↩️ تم استرجاع التوزيع الأصلي.'; }
+function renderTechDashboard(){
+    const section=document.getElementById('tech-dashboard-section'); if(!section)return;
+    const grid=section.querySelector('[data-tech-dynamic-grid]') || section.querySelector('div[style*="grid-template-columns"]'); if(!grid)return;
+    grid.setAttribute('data-tech-dynamic-grid','1');
+    const activeFaults=getStoredFaults().filter(f=>f.status==='active');
+    grid.innerHTML='';
+    TECH_SCREENS.forEach(sc=>{
+        const box=document.createElement('div'); box.style.cssText='background:#fff;padding:15px;border-radius:8px;border-top:5px solid #64748b;box-shadow:0 2px 4px rgba(0,0,0,0.1);';
+        const h=document.createElement('h3'); h.style.cssText='margin-top:0;color:#334155;border-bottom:1px solid #eee;padding-bottom:10px;'; h.textContent=`${sc.name} (${sc.codes.length? 'كود '+sc.codes.join('، ') : 'بدون أكواد'})`; box.appendChild(h);
+        const holder=document.createElement('div');
+        const list=activeFaults.filter(f=>sc.codes.includes(Number(f.faultCode)));
+        holder.innerHTML=list.length?list.map(f=>createTechFaultCardHTML(f)).join(''):'<p class="no-data" style="color:#64748b;font-size:13px;">لا توجد أعطال حالياً.</p>';
+        box.appendChild(holder); grid.appendChild(box);
+    });
+}
+function createTechFaultCardHTML(fault){
+    const start=fault.startTime?new Date(fault.startTime).toLocaleTimeString('ar-EG'):'-'; const dur=fault.startTime?formatDuration(getFaultDurationSeconds(fault),'seconds'):'0 ثانية';
+    return `<div class="fault-card" data-fault-id="${fault.id}" style="background:#fff;border:1px solid #cbd5e1;padding:12px;border-radius:6px;margin-bottom:10px;"><div style="font-weight:bold;color:#dc2626;margin-bottom:8px;">🔴 ماكينة عطلانة: ${fault.machineNumber||'غير معروف'}</div><div style="font-size:13px;color:#334155;margin-bottom:10px;"><p style="margin:3px 0;"><strong>المرحلة:</strong> ${fault.machineStage||'-'}</p><p style="margin:3px 0;"><strong>القسم:</strong> ${fault.machineSection||'-'} (${fault.machineZone||'-'})</p><p style="margin:3px 0;"><strong>العطل:</strong> كود ${fault.faultCode||'-'} — ${fault.faultName||'-'}</p><p style="margin:3px 0;"><strong>وقت البداية:</strong> ${start}</p><p style="margin:3px 0;"><strong>مدة التوقف:</strong> <span class="elapsed-time">${dur}</span></p>${fault.notes?`<p style="margin:3px 0;"><strong>ملاحظات:</strong> ${fault.notes}</p>`:''}</div><button class="btn btn-success btn-block" style="width:100%;padding:6px;" onclick="endFault('${fault.id}')">✅ تم الإصلاح وإنهاء العطل</button></div>`;
+}
+
+let faultCodesSyncReady = false;
+
+function getStoredFaultCodes() {
+    try {
+        const saved = JSON.parse(localStorage.getItem("factory5_fault_codes_backup") || "null");
+        if (Array.isArray(saved) && saved.length) {
+            return saved.map(x => ({ code: Number(x.code), name: String(x.name || '').trim() }))
+                .filter(x => Number.isFinite(x.code) && x.name);
+        }
+    } catch (_) {}
+    return [...FAULT_CODES];
+}
+
+function saveFaultCodesLocal(codes) {
+    const safe = (Array.isArray(codes) ? codes : [])
+        .map(x => ({ code: Number(x.code), name: String(x.name || '').trim() }))
+        .filter(x => Number.isFinite(x.code) && x.name)
+        .sort((a,b) => a.code - b.code);
+    localStorage.setItem("factory5_fault_codes_backup", JSON.stringify(safe));
+}
+
+function setupFaultCodesSync() {
+    FAULT_CODES = getStoredFaultCodes();
+    saveFaultCodesLocal(FAULT_CODES);
+    faultCodesSyncReady = true;
+    populateFaultCodes();
+    updateFaultCodesManagementTable();
+
+    if (!rtdb) return;
+    rtdb.ref('factory5_fault_codes').on('value', (snapshot) => {
+        const data = snapshot.val();
+        if (data && typeof data === 'object') {
+            const list = Array.isArray(data) ? data : Object.values(data);
+            const clean = list.map(x => ({ code: Number(x.code), name: String(x.name || '').trim() }))
+                .filter(x => Number.isFinite(x.code) && x.name)
+                .sort((a,b) => a.code - b.code);
+            if (clean.length) {
+                FAULT_CODES = clean;
+                saveFaultCodesLocal(FAULT_CODES);
+            }
+        }
+        populateFaultCodes();
+        updateFaultCodesManagementTable();
+    });
+}
+
+function saveFaultCodes(codes) {
+    const safe = (Array.isArray(codes) ? codes : [])
+        .map(x => ({ code: Number(x.code), name: String(x.name || '').trim() }))
+        .filter(x => Number.isFinite(x.code) && x.name)
+        .sort((a,b) => a.code - b.code);
+    FAULT_CODES = safe;
+    saveFaultCodesLocal(safe);
+    populateFaultCodes();
+    updateFaultCodesManagementTable();
+    if (rtdb) {
+        const obj = {};
+        safe.forEach(x => { obj[String(x.code)] = x; });
+        rtdb.ref('factory5_fault_codes').set(obj);
+    }
+}
+
+function clearFaultCodeForm() {
+    const code = document.getElementById('admin-fault-code');
+    const name = document.getElementById('admin-fault-name');
+    const original = document.getElementById('fault-code-edit-original');
+    const title = document.getElementById('fault-code-form-title');
+    const cancel = document.getElementById('cancel-fault-code-edit-btn');
+    if (code) code.value = '';
+    if (name) name.value = '';
+    if (original) original.value = '';
+    if (title) title.textContent = '➕ إضافة كود عطل جديد';
+    if (cancel) cancel.style.display = 'none';
+}
+
+window.editFaultCode = function(code) {
+    const item = FAULT_CODES.find(x => String(x.code) === String(code));
+    if (!item) return;
+    document.getElementById('admin-fault-code').value = item.code;
+    document.getElementById('admin-fault-name').value = item.name;
+    document.getElementById('fault-code-edit-original').value = item.code;
+    document.getElementById('fault-code-form-title').textContent = `✏️ تعديل كود ${item.code}`;
+    document.getElementById('cancel-fault-code-edit-btn').style.display = 'inline-block';
+    document.getElementById('admin-fault-code').focus();
+};
+
+window.deleteFaultCode = function(code) {
+    const item = FAULT_CODES.find(x => String(x.code) === String(code));
+    if (!item) return;
+    if (!confirm(`هل أنت متأكد من حذف كود العطل ${item.code} — ${item.name}؟\n\nالحذف سيزيل الكود من قائمة تسجيل الأعطال فقط، ولن يحذف أي أعطال تاريخية مسجلة بهذا الكود.`)) return;
+    saveFaultCodes(FAULT_CODES.filter(x => String(x.code) !== String(code)));
+};
+
+function saveFaultCodeFromAdmin() {
+    const codeInput = document.getElementById('admin-fault-code');
+    const nameInput = document.getElementById('admin-fault-name');
+    const originalInput = document.getElementById('fault-code-edit-original');
+    const status = document.getElementById('fault-code-management-status');
+    const code = Number(String(codeInput?.value || '').trim());
+    const name = String(nameInput?.value || '').trim();
+    const original = String(originalInput?.value || '').trim();
+
+    if (!Number.isInteger(code) || code < 1) {
+        alert('من فضلك أدخل رقم كود صحيح (رقم صحيح أكبر من صفر).'); return;
+    }
+    if (!name) { alert('من فضلك اكتب اسم/وصف العطل.'); return; }
+
+    const editing = original !== '';
+    const duplicate = FAULT_CODES.find(x => String(x.code) === String(code) && String(x.code) !== original);
+    if (duplicate) { alert(`كود ${code} موجود بالفعل. اختر كودًا آخر.`); return; }
+
+    let next;
+    if (editing) {
+        const exists = FAULT_CODES.some(x => String(x.code) === original);
+        if (!exists) { alert('الكود المراد تعديله غير موجود.'); clearFaultCodeForm(); return; }
+        next = FAULT_CODES.map(x => String(x.code) === original ? { code, name } : x);
+    } else {
+        next = [...FAULT_CODES, { code, name }];
+    }
+    saveFaultCodes(next);
+    if (status) status.textContent = editing ? '✅ تم تعديل كود العطل ومزامنته مع شاشة العامل.' : '✅ تم إضافة كود العطل ومزامنته مع شاشة العامل.';
+    clearFaultCodeForm();
+}
+
+function updateFaultCodesManagementTable() {
+    const tbody = document.querySelector('#fault-codes-management-table tbody');
+    if (!tbody) return;
+    tbody.innerHTML = '';
+    if (!FAULT_CODES.length) {
+        tbody.innerHTML = '<tr><td colspan="3" class="no-data">لا توجد أكواد أعطال حاليًا.</td></tr>';
+        return;
+    }
+    FAULT_CODES.slice().sort((a,b) => a.code-b.code).forEach(item => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td>كود ${item.code}</td><td>${item.name}</td><td>
+            <button class="btn btn-secondary" onclick="editFaultCode(${item.code})">✏️ تعديل</button>
+            <button class="btn btn-danger" onclick="deleteFaultCode(${item.code})" style="margin-right:6px;">🗑️ حذف</button>
+        </td>`;
+        tbody.appendChild(tr);
+    });
+}
+
 let selectedMachine = null;
 let html5QrCode = null;
 let paretoChartInstance = null;
 let cachedFaults = [];
+let firebaseFaultsSyncReady = false;
 let serverTimeOffsetMs = 0;
 let serverTimeSyncReady = false;
 
@@ -110,6 +370,8 @@ document.addEventListener("DOMContentLoaded", () => {
     setupRealtimeSync();
     setupServerClockSync();
     setupMachineSync();
+    setupFaultCodesSync();
+    setupTechScreensSync();
     setupEventListeners();
     restoreAdminStateOnLoad();
 });
@@ -118,6 +380,7 @@ function setupRealtimeSync() {
     if (!rtdb) return;
     rtdb.ref('factory5_faults').on('value', (snapshot) => {
         const data = snapshot.val();
+        firebaseFaultsSyncReady = true;
         if (data) {
             cachedFaults = Object.values(data);
             localStorage.setItem("factory5_faults_backup", JSON.stringify(cachedFaults));
@@ -125,6 +388,8 @@ function setupRealtimeSync() {
             cachedFaults = [];
             // لا نحذف النسخة الاحتياطية تلقائياً؛ الحذف يتم فقط من لوحة الإدارة.
         }
+        loadFaultsFromStorage();
+        // تحديث شاشة العامل وشاشات الفنيين فور وصول أي تغيير من Firebase، بدون Refresh.
         loadFaultsFromStorage();
         const activeTab = sessionStorage.getItem("factory5_active_tab") || "tab-indicators";
         if (document.getElementById("admin-panel") && !document.getElementById("admin-panel").classList.contains("hidden")) {
@@ -379,7 +644,11 @@ function updateLiveFaultDurations(nowMs = getSynchronizedNow()) {
     active.forEach(card => {
         const faultId = card.getAttribute("data-fault-id");
         const fault = getStoredFaults().find(f => String(f.id) === String(faultId) && f.status === "active");
-        if (!fault) return;
+        if (!fault) {
+            // العطل انتهى من جهاز آخر أو من نفس الجهاز: احذف البطاقة فورًا من الواجهة.
+            card.remove();
+            return;
+        }
         const durationEl = card.querySelector(".elapsed-time");
         if (durationEl) durationEl.textContent = formatDuration(getFaultDurationSeconds(fault, nowMs), "seconds");
     });
@@ -400,7 +669,9 @@ function populateFaultCodes() {
 function getStoredFaults() {
     // المصدر الأساسي هو Firebase، مع نسخة احتياطية محلية حتى لا تضيع البيانات
     // إذا تم إغلاق الصفحة أو حدث انقطاع مؤقت في الاتصال.
-    if (Array.isArray(cachedFaults) && cachedFaults.length) return cachedFaults;
+    // بعد الاتصال بـFirebase يكون هو المصدر الفعلي، حتى لو كانت القائمة فارغة
+    // (وبالتالي الحذف ينعكس فورًا ولا تعود نسخة localStorage القديمة).
+    if (firebaseFaultsSyncReady) return cachedFaults;
     try {
         const backup = JSON.parse(localStorage.getItem("factory5_faults_backup") || "[]");
         return Array.isArray(backup) ? backup : [];
@@ -643,6 +914,21 @@ function setupEventListeners() {
     if (saveMachineBtn) saveMachineBtn.addEventListener("click", saveMachineFromAdmin);
     const cancelMachineEditBtn = document.getElementById("cancel-machine-edit-btn");
     if (cancelMachineEditBtn) cancelMachineEditBtn.addEventListener("click", clearMachineForm);
+
+    const saveFaultCodeBtn = document.getElementById("save-fault-code-btn");
+    if (saveFaultCodeBtn) saveFaultCodeBtn.addEventListener("click", saveFaultCodeFromAdmin);
+    const saveTechScreenBtn = document.getElementById("save-tech-screen-btn");
+    if (saveTechScreenBtn) saveTechScreenBtn.addEventListener("click", saveTechScreenFromAdmin);
+    const newTechScreenBtn = document.getElementById("new-tech-screen-btn");
+    if (newTechScreenBtn) newTechScreenBtn.addEventListener("click", clearTechScreenForm);
+    const deleteTechScreenBtn = document.getElementById("delete-tech-screen-btn");
+    if (deleteTechScreenBtn) deleteTechScreenBtn.addEventListener("click", deleteTechScreenFromAdmin);
+    const resetTechScreensBtn = document.getElementById("reset-tech-screens-btn");
+    if (resetTechScreensBtn) resetTechScreensBtn.addEventListener("click", resetTechScreens);
+
+    const cancelFaultCodeBtn = document.getElementById("cancel-fault-code-edit-btn");
+    if (cancelFaultCodeBtn) cancelFaultCodeBtn.addEventListener("click", clearFaultCodeForm);
+
 }
 
 function findAndSelectMachine(query, fromScanner = false) {
@@ -1073,6 +1359,8 @@ function startFaultRecord() {
     const faults = getStoredFaults();
     faults.push(newFault);
     saveStoredFaults(faults);
+    // تحديث واجهة العامل والفنيين فورًا على نفس الجهاز بدون انتظار Refresh.
+    loadFaultsFromStorage();
 
     document.getElementById("machine-search-input").value = "";
     document.getElementById("machine-info-card").classList.add("hidden");
@@ -1092,6 +1380,7 @@ function loadFaultsFromStorage() {
     const techCatMechanics = document.getElementById("tech-cat-mechanics");
     const techCatAir = document.getElementById("tech-cat-air");
     const techCatServices = document.getElementById("tech-cat-services");
+    const techCatOther = document.getElementById("tech-cat-other");
     
     if (!container && !techCatElectricity) return;
 
@@ -1129,73 +1418,36 @@ function loadFaultsFromStorage() {
         }
     }
 
-    if (techCatElectricity && techCatMachines && techCatMechanics && techCatAir && techCatServices) {
-        const excludedCodes = [3, 7, 8, 9, 11, 14, 15, 17];
-        const techActiveFaults = activeFaults.filter(f => !excludedCodes.includes(Number(f.faultCode)));
+    // شاشة الفنيين أصبحت ديناميكية حسب إعدادات الإدارة.
+    if (techCatElectricity) renderTechDashboard();
 
-        // توزيع أعطال شاشات الفنيين بشكل حصري: كل كود له شاشة واحدة فقط.
-        // مهم: الكود 12 يتبع صيانة الكهرباء، وليس أمن وأوناش.
-        const electricityCodes = new Set([5, 12]);
-        const machinesCodes = new Set([1, 2]);
-        const mechanicsCodes = new Set([4, 13]);
-        const airCodes = new Set([6]);
-        const servicesCodes = new Set([10, 16]);
-
-        const getTechCategory = (faultCode) => {
-            const code = Number(faultCode);
-            if (electricityCodes.has(code)) return 'electricity';
-            if (machinesCodes.has(code)) return 'machines';
-            if (mechanicsCodes.has(code)) return 'mechanics';
-            if (airCodes.has(code)) return 'air';
-            if (servicesCodes.has(code)) return 'services';
-            return null;
-        };
-
-        // كل عطل يُضاف لقائمة واحدة فقط حسب الكود، لمنع ظهور نفس العطل في شاشتين.
-        const categoryLists = {
-            electricity: [],
-            machines: [],
-            mechanics: [],
-            air: [],
-            services: []
-        };
-        techActiveFaults.forEach(fault => {
-            const category = getTechCategory(fault.faultCode);
-            if (category) categoryLists[category].push(fault);
-        });
-
-        const electricityFaults = categoryLists.electricity;
-        const machinesFaults = categoryLists.machines;
-        const mechanicsFaults = categoryLists.mechanics;
-        const airFaults = categoryLists.air;
-        const servicesFaults = categoryLists.services;
-
-        const renderCategory = (list) => {
-            if (list.length === 0) return '<p class="no-data" style="color:#64748b; font-size:13px;">لا توجد أعطال حالياً.</p>';
-            let h = "";
-            list.forEach(f => { h += createFaultCardHTML(f, true); });
-            return h;
-        };
-
-        techCatElectricity.innerHTML = renderCategory(electricityFaults);
-        techCatMachines.innerHTML = renderCategory(machinesFaults);
-        techCatMechanics.innerHTML = renderCategory(mechanicsFaults);
-        techCatAir.innerHTML = renderCategory(airFaults);
-        techCatServices.innerHTML = renderCategory(servicesFaults);
-    }
 }
 
+let finishingFaultIds = new Set();
+
 window.endFault = function(faultId) {
+    const key = String(faultId);
+    // منع الضغط المتكرر على زر "تم الإصلاح"؛ أول ضغطة فقط تنهي العطل.
+    if (finishingFaultIds.has(key)) return;
     const faults = getStoredFaults();
-    const fault = faults.find(f => f.id === faultId);
-    if (!fault) return;
+    const fault = faults.find(f => String(f.id) === key);
+    if (!fault || fault.status !== "active") {
+        loadFaultsFromStorage();
+        return;
+    }
+    finishingFaultIds.add(key);
     fault.endTime = getSynchronizedNow();
     // نحفظ المدة بالثواني بدون تقريب، ونحتفظ بالحقل القديم للتوافق فقط.
     fault.durationSeconds = Math.max(0, (fault.endTime - fault.startTime) / 1000);
     fault.durationMinutes = fault.durationSeconds / 60;
     fault.status = "finished";
+    // نحدّث الواجهة أولًا، لذلك تختفي البطاقة فور الضغط حتى قبل اكتمال الحفظ السحابي.
+    loadFaultsFromStorage();
     saveStoredFaults(faults);
+    // إعادة الرسم بعد الحفظ لضمان مزامنة شاشة العامل وشاشات الفنيين.
+    loadFaultsFromStorage();
     alert(`تم تسجيل انتهاء العطل. المدة: ${formatDuration(fault.durationSeconds, "seconds")}`);
+    finishingFaultIds.delete(key);
 };
 
 window.deleteFault = function(faultId) {
