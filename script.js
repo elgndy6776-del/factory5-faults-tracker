@@ -101,11 +101,14 @@ let selectedMachine = null;
 let html5QrCode = null;
 let paretoChartInstance = null;
 let cachedFaults = [];
+let serverTimeOffsetMs = 0;
+let serverTimeSyncReady = false;
 
 document.addEventListener("DOMContentLoaded", () => {
     initClock();
     populateFaultCodes();
     setupRealtimeSync();
+    setupServerClockSync();
     setupMachineSync();
     setupEventListeners();
     restoreAdminStateOnLoad();
@@ -340,14 +343,46 @@ window.editMachine = editMachine;
 window.deleteMachine = deleteMachine;
 window.printMachineQR = printMachineQR;
 
+// مزامنة الساعة مع ساعة Firebase حتى تستخدم كل الأجهزة (لاب/موبايل/كمبيوتر)
+// نفس المرجع الزمني، مهما كان ضبط ساعة الجهاز المحلي مختلفًا.
+function setupServerClockSync() {
+    if (!rtdb) return;
+    rtdb.ref('.info/serverTimeOffset').on('value', (snapshot) => {
+        const value = Number(snapshot.val());
+        serverTimeOffsetMs = Number.isFinite(value) ? value : 0;
+        serverTimeSyncReady = true;
+        // إعادة رسم المدد فور وصول المزامنة.
+        updateLiveFaultDurations(getSynchronizedNow());
+    });
+}
+
+function getSynchronizedNow() {
+    return Date.now() + (serverTimeSyncReady ? serverTimeOffsetMs : 0);
+}
+
 function initClock() {
     const clockEl = document.getElementById("live-clock");
-    if (clockEl) {
-        setInterval(() => {
-            const now = new Date();
-            clockEl.textContent = now.toLocaleTimeString("ar-EG");
-        }, 1000);
-    }
+    const updateClock = () => {
+        const nowMs = getSynchronizedNow();
+        const now = new Date(nowMs);
+        if (clockEl) clockEl.textContent = now.toLocaleTimeString("ar-EG");
+
+        // الساعة الظاهرة ومدة العطل يستخدمان نفس التوقيت الموحد.
+        updateLiveFaultDurations(nowMs);
+    };
+    updateClock();
+    setInterval(updateClock, 1000);
+}
+
+function updateLiveFaultDurations(nowMs = getSynchronizedNow()) {
+    const active = document.querySelectorAll(".fault-card[data-fault-id]");
+    active.forEach(card => {
+        const faultId = card.getAttribute("data-fault-id");
+        const fault = getStoredFaults().find(f => String(f.id) === String(faultId) && f.status === "active");
+        if (!fault) return;
+        const durationEl = card.querySelector(".elapsed-time");
+        if (durationEl) durationEl.textContent = formatDuration(getFaultDurationSeconds(fault, nowMs), "seconds");
+    });
 }
 
 function populateFaultCodes() {
@@ -389,28 +424,47 @@ function saveStoredFaults(faults) {
     rtdb.ref('factory5_faults').set(faultsObj);
 }
 
-// مدة دقيقة بدون تقريب: نعتمد على وقت البداية والنهاية للمسجلات الجديدة،
-// مع دعم السجلات القديمة التي تحتوي durationMinutes حتى لا نفقد أي بيانات.
-function getFaultDurationSeconds(fault) {
+// حساب مدة العطل بدقة من الطابع الزمني الحقيقي (Date.now) دون تقريب للدقائق.
+// السجلات الجديدة تعتمد دائماً على startTime/endTime، مع الإبقاء على دعم
+// durationSeconds/durationMinutes للسجلات القديمة حتى لا تضيع أي بيانات.
+function getFaultDurationSeconds(fault, nowMs = getSynchronizedNow()) {
     if (!fault) return 0;
+
+    // العطل المفتوح: من لحظة البداية وحتى اللحظة الحالية.
+    // العطل المنتهي: من لحظة البداية وحتى لحظة النهاية المسجلة.
+    if (Number.isFinite(Number(fault.startTime))) {
+        const end = Number.isFinite(Number(fault.endTime)) ? Number(fault.endTime) : nowMs;
+        return Math.max(0, (end - Number(fault.startTime)) / 1000);
+    }
+
     if (Number.isFinite(Number(fault.durationSeconds))) return Math.max(0, Number(fault.durationSeconds));
-    if (fault.startTime && fault.endTime) return Math.max(0, (Number(fault.endTime) - Number(fault.startTime)) / 1000);
     if (Number.isFinite(Number(fault.durationMinutes))) return Math.max(0, Number(fault.durationMinutes) * 60);
     return 0;
 }
 
-function getFaultDurationMinutes(fault) {
-    return getFaultDurationSeconds(fault) / 60;
+function getFaultDurationMinutes(fault, nowMs = Date.now()) {
+    return getFaultDurationSeconds(fault, nowMs) / 60;
 }
 
+// العرض يعتمد على الثواني الصحيحة المكتملة، بدون تحويل 10 ثوانٍ إلى دقيقة
+// وبدون تقريب 61 ثانية إلى دقيقتين. ويدعم الساعات تلقائياً.
 function formatDuration(value, unit = "minutes") {
     if (value === null || value === undefined || isNaN(value)) return "-";
-    const totalSeconds = Math.max(0, Math.round(unit === "seconds" ? Number(value) : Number(value) * 60));
-    if (totalSeconds < 60) return `${totalSeconds} ثانية`;
-    const mins = Math.floor(totalSeconds / 60);
-    const secs = totalSeconds % 60;
-    if (secs === 0) return `${mins} دقيقة`;
-    return `${mins} دقيقة و ${secs} ثانية`;
+    const totalSeconds = Math.max(0, Math.floor(unit === "seconds" ? Number(value) : Number(value) * 60));
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+
+    if (hours > 0) {
+        const parts = [`${hours} ساعة`];
+        if (minutes > 0) parts.push(`${minutes} دقيقة`);
+        if (seconds > 0) parts.push(`${seconds} ثانية`);
+        return parts.join(" و ");
+    }
+    if (minutes > 0) {
+        return seconds > 0 ? `${minutes} دقيقة و ${seconds} ثانية` : `${minutes} دقيقة`;
+    }
+    return `${seconds} ثانية`;
 }
 
 // دالة التنقل بين تبويبات لوحة الإدارة العامة
@@ -1008,7 +1062,7 @@ function startFaultRecord() {
         machineSection: selectedMachine.section,
         faultCode: faultObj.code,
         faultName: faultObj.name,
-        startTime: Date.now(),
+        startTime: getSynchronizedNow(),
         endTime: null,
         durationMinutes: 0, // للتوافق مع البيانات القديمة
         durationSeconds: 0,
@@ -1045,11 +1099,12 @@ function loadFaultsFromStorage() {
 
     const createFaultCardHTML = (fault, isTechMode) => {
         const startTimeStr = fault.startTime ? new Date(fault.startTime).toLocaleTimeString("ar-EG") : "-";
-        const elapsedSeconds = fault.startTime ? Math.floor((Date.now() - fault.startTime) / 1000) : 0;
-        let timeDisplay = elapsedSeconds < 60 ? `${elapsedSeconds} ثانية` : `${Math.floor(elapsedSeconds / 60)} دقيقة و ${elapsedSeconds % 60} ثانية`;
+        const timeDisplay = fault.startTime
+            ? formatDuration(getFaultDurationSeconds(fault), "seconds")
+            : "0 ثانية";
 
         return `
-            <div class="fault-card" style="background:#fff; border:1px solid #cbd5e1; padding:12px; border-radius:6px; margin-bottom:10px;">
+            <div class="fault-card" data-fault-id="${fault.id}" style="background:#fff; border:1px solid #cbd5e1; padding:12px; border-radius:6px; margin-bottom:10px;">
                 <div class="fault-card-header" style="font-weight:bold; color:#dc2626; margin-bottom:8px;">🔴 ماكينة عطلانة: ${fault.machineNumber || 'غير معروف'}</div>
                 <div class="fault-card-body" style="font-size:13px; color:#334155; margin-bottom:10px;">
                     <p style="margin:3px 0;"><strong>المرحلة:</strong> ${fault.machineStage || '-'}</p>
@@ -1134,7 +1189,7 @@ window.endFault = function(faultId) {
     const faults = getStoredFaults();
     const fault = faults.find(f => f.id === faultId);
     if (!fault) return;
-    fault.endTime = Date.now();
+    fault.endTime = getSynchronizedNow();
     // نحفظ المدة بالثواني بدون تقريب، ونحتفظ بالحقل القديم للتوافق فقط.
     fault.durationSeconds = Math.max(0, (fault.endTime - fault.startTime) / 1000);
     fault.durationMinutes = fault.durationSeconds / 60;
@@ -1146,7 +1201,7 @@ window.endFault = function(faultId) {
 window.deleteFault = function(faultId) {
     if (!confirm("هل أنت متأكد من رغبتك في حذف هذا العطل نهائياً؟")) return;
     let faults = getStoredFaults();
-    faults = faults.filter(f => f.id !== faultId);
+    faults = faults.filter(f => String(f.id) !== String(faultId));
     saveStoredFaults(faults);
     alert("تم حذف العطل بنجاح.");
 };
@@ -1263,25 +1318,27 @@ function applyAdvancedSearch() {
 }
 
 function updateParetoTable() {
-    const faults = getStoredFaults().filter(f => f.status === "finished" && f.faultCode);
+    // Pareto يعتمد فقط على سجل الأعطال الحالي بعد الحذف.
+    const faults = getStoredFaults().filter(f => f && f.status === "finished" && f.faultCode);
     const tbody = document.querySelector("#pareto-table tbody");
     if (!tbody) return;
     tbody.innerHTML = "";
 
     const totalFaultsCount = faults.length || 1;
     const totalFaultsDuration = faults.reduce((sum, f) => sum + getFaultDurationSeconds(f), 0) || 1;
-
     const paretoMap = {};
-    FAULT_CODES.forEach(fc => { paretoMap[fc.code] = { code: fc.code, name: fc.name, count: 0, duration: 0 }; });
 
     faults.forEach(f => {
-        if (paretoMap[f.faultCode]) {
-            paretoMap[f.faultCode].count += 1;
-            paretoMap[f.faultCode].duration += getFaultDurationSeconds(f);
+        const code = String(f.faultCode);
+        if (!paretoMap[code]) {
+            const codeInfo = FAULT_CODES.find(fc => String(fc.code) === code);
+            paretoMap[code] = { code: f.faultCode, name: f.faultName || (codeInfo ? codeInfo.name : "عطل غير محدد"), count: 0, duration: 0 };
         }
+        paretoMap[code].count += 1;
+        paretoMap[code].duration += getFaultDurationSeconds(f);
     });
 
-    const sortedPareto = Object.values(paretoMap).sort((a, b) => b.duration - a.duration || b.count - a.count);
+    const sortedPareto = Object.values(paretoMap).filter(item => item.count > 0).sort((a, b) => b.duration - a.duration || b.count - a.count);
     let cumulativeDurationPercent = 0;
     const chartLabels = [], chartDurations = [], chartCumulative = [];
 
@@ -1289,21 +1346,14 @@ function updateParetoTable() {
         const countRatio = ((item.count / totalFaultsCount) * 100).toFixed(1);
         const durationRatio = (item.duration / totalFaultsDuration) * 100;
         cumulativeDurationPercent += durationRatio;
-
         chartLabels.push(`كود ${item.code}: ${item.name}`);
         chartDurations.push(Number(item.duration.toFixed(3)));
         chartCumulative.push(Number(cumulativeDurationPercent.toFixed(1)));
-
         const tr = document.createElement("tr");
         tr.innerHTML = `
-            <td>كود ${item.code}</td>
-            <td>${item.name}</td>
-            <td>${item.count}</td>
-            <td>${countRatio}%</td>
-            <td>${formatDuration(item.duration, "seconds")}</td>
-            <td>${durationRatio.toFixed(1)}%</td>
-            <td><strong>${cumulativeDurationPercent.toFixed(1)}%</strong></td>
-        `;
+            <td>كود ${item.code}</td><td>${item.name}</td><td>${item.count}</td><td>${countRatio}%</td>
+            <td>${formatDuration(item.duration, "seconds")}</td><td>${durationRatio.toFixed(1)}%</td>
+            <td><strong>${cumulativeDurationPercent.toFixed(1)}%</strong></td>`;
         tbody.appendChild(tr);
     });
 
