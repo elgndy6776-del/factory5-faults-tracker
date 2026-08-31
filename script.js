@@ -13,7 +13,7 @@ if (typeof firebase !== 'undefined' && !firebase.apps.length) {
 }
 const rtdb = typeof firebase !== 'undefined' ? firebase.database() : null;
 
-const MACHINES = [
+const DEFAULT_MACHINES = [
     { number: "1712", zone: "منطقة 1", section: "تجهيزات منطقة 1", stage: "منشار" },
     { number: "982", zone: "منطقة 1", section: "تجهيزات منطقة 1", stage: "متقاب" },
     { number: "961", zone: "منطقة 1", section: "تجهيزات منطقة 1", stage: "متقاب" },
@@ -72,6 +72,11 @@ const MACHINES = [
     { number: "120", zone: "منطقة 2", section: "لحام منطقة 2", stage: "ماكينه يدوي" }
 ];
 
+// قائمة الماكينات الفعلية: تبدأ بالقائمة الأصلية حتى لا تضيع أي ماكينة،
+// ثم يمكن للإدارة إضافة/تعديل/حذف الماكينات وحفظها في Firebase.
+let MACHINES = [...DEFAULT_MACHINES];
+let machineSyncReady = false;
+
 const FAULT_CODES = [
     { code: 1, name: "صيانه الماكينه" },
     { code: 2, name: "الصيانه الوقائية" },
@@ -101,6 +106,7 @@ document.addEventListener("DOMContentLoaded", () => {
     initClock();
     populateFaultCodes();
     setupRealtimeSync();
+    setupMachineSync();
     setupEventListeners();
     restoreAdminStateOnLoad();
 });
@@ -121,11 +127,218 @@ function setupRealtimeSync() {
         if (document.getElementById("admin-panel") && !document.getElementById("admin-panel").classList.contains("hidden")) {
             if (activeTab === "tab-indicators") updateIndicators();
             else if (activeTab === "tab-machines") updateMachinesPerformanceTable();
+            else if (activeTab === "tab-machine-management") updateMachineManagementTable();
             else if (activeTab === "tab-pareto") updateParetoTable();
             else if (activeTab === "tab-logs") updateFullLogsTable();
         }
     });
 }
+
+function getStoredMachines() {
+    try {
+        const saved = JSON.parse(localStorage.getItem("factory5_machines_backup") || "null");
+        if (Array.isArray(saved) && saved.length) return saved;
+    } catch (_) {}
+    return [...DEFAULT_MACHINES];
+}
+
+function saveMachinesLocal(machines) {
+    const safe = Array.isArray(machines) ? machines : [];
+    localStorage.setItem("factory5_machines_backup", JSON.stringify(safe));
+}
+
+function setupMachineSync() {
+    // نحتفظ بنسخة محلية أولاً حتى يظل المشروع يعمل حتى مع انقطاع الإنترنت.
+    MACHINES = getStoredMachines();
+    saveMachinesLocal(MACHINES);
+    machineSyncReady = true;
+
+    if (!rtdb) {
+        updateMachineManagementTable();
+        return;
+    }
+
+    rtdb.ref('factory5_machines').on('value', (snapshot) => {
+        const data = snapshot.val();
+        if (data && typeof data === 'object') {
+            const list = Array.isArray(data) ? data : Object.values(data);
+            const clean = list.filter(m => m && m.number !== undefined && String(m.number).trim() !== '')
+                .map(m => ({
+                    number: String(m.number).trim(),
+                    zone: String(m.zone || '').trim(),
+                    section: String(m.section || '').trim(),
+                    stage: String(m.stage || '').trim()
+                }));
+            if (clean.length) {
+                MACHINES = clean;
+                saveMachinesLocal(MACHINES);
+            }
+        }
+        updateMachineManagementTable();
+        updateMachinesPerformanceTable();
+    });
+}
+
+function saveMachines(machines) {
+    const safe = (Array.isArray(machines) ? machines : [])
+        .filter(m => m && String(m.number || '').trim())
+        .map(m => ({
+            number: String(m.number).trim(),
+            zone: String(m.zone || '').trim(),
+            section: String(m.section || '').trim(),
+            stage: String(m.stage || '').trim()
+        }));
+
+    MACHINES = safe;
+    saveMachinesLocal(safe);
+
+    if (rtdb) {
+        const obj = {};
+        safe.forEach((m, index) => { obj[String(index)] = m; });
+        rtdb.ref('factory5_machines').set(obj);
+    }
+    updateMachineManagementTable();
+    updateMachinesPerformanceTable();
+}
+
+function clearMachineForm() {
+    const ids = ['admin-machine-number','admin-machine-zone','admin-machine-section','admin-machine-stage'];
+    ids.forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+    const original = document.getElementById('machine-edit-original-number');
+    if (original) original.value = '';
+    const title = document.getElementById('machine-form-title');
+    if (title) title.textContent = '➕ إضافة ماكينة جديدة';
+    const cancel = document.getElementById('cancel-machine-edit-btn');
+    if (cancel) cancel.style.display = 'none';
+}
+
+function editMachine(machineNumber) {
+    const machine = MACHINES.find(m => String(m.number) === String(machineNumber));
+    if (!machine) return;
+    document.getElementById('admin-machine-number').value = machine.number;
+    document.getElementById('admin-machine-zone').value = machine.zone || '';
+    document.getElementById('admin-machine-section').value = machine.section || '';
+    document.getElementById('admin-machine-stage').value = machine.stage || '';
+    document.getElementById('machine-edit-original-number').value = machine.number;
+    document.getElementById('machine-form-title').textContent = `✏️ تعديل الماكينة ${machine.number}`;
+    document.getElementById('cancel-machine-edit-btn').style.display = 'inline-block';
+    document.getElementById('admin-machine-number').focus();
+    document.getElementById('tab-machine-management').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function saveMachineFromAdmin() {
+    const number = document.getElementById('admin-machine-number').value.trim();
+    const zone = document.getElementById('admin-machine-zone').value.trim();
+    const section = document.getElementById('admin-machine-section').value.trim();
+    const stage = document.getElementById('admin-machine-stage').value.trim();
+    const originalNumber = document.getElementById('machine-edit-original-number').value.trim();
+    const status = document.getElementById('machine-management-status');
+
+    if (!number) {
+        if (status) { status.textContent = 'من فضلك أدخل رقم الماكينة.'; status.style.color = '#dc2626'; }
+        return;
+    }
+
+    const duplicate = MACHINES.some(m => String(m.number).trim() === number && String(m.number).trim() !== originalNumber);
+    if (duplicate) {
+        if (status) { status.textContent = `الماكينة ${number} موجودة بالفعل.`; status.style.color = '#dc2626'; }
+        return;
+    }
+
+    const newMachine = { number, zone, section, stage };
+    let next = [...MACHINES];
+    if (originalNumber) {
+        const idx = next.findIndex(m => String(m.number).trim() === originalNumber);
+        if (idx < 0) {
+            if (status) { status.textContent = 'الماكينة الأصلية غير موجودة.'; status.style.color = '#dc2626'; }
+            return;
+        }
+        next[idx] = newMachine;
+    } else {
+        next.push(newMachine);
+    }
+
+    saveMachines(next);
+    clearMachineForm();
+    if (status) { status.textContent = `تم حفظ الماكينة ${number} بنجاح.`; status.style.color = '#16a34a'; }
+}
+
+function deleteMachine(machineNumber) {
+    const machine = MACHINES.find(m => String(m.number) === String(machineNumber));
+    if (!machine) return;
+    const ok = confirm(`هل أنت متأكد من حذف الماكينة ${machine.number} من قائمة الماكينات؟\n\nسيتم حذفها من القائمة فقط، ولن يتم حذف أي أعطال أو تقارير تاريخية مسجلة عليها.`);
+    if (!ok) return;
+    saveMachines(MACHINES.filter(m => String(m.number) !== String(machineNumber)));
+    const status = document.getElementById('machine-management-status');
+    if (status) { status.textContent = `تم حذف الماكينة ${machine.number} من القائمة. البيانات التاريخية محفوظة.`; status.style.color = '#16a34a'; }
+}
+
+function generateMachineQR(container, number) {
+    if (!container || typeof QRCode === 'undefined') return;
+    container.innerHTML = '';
+    new QRCode(container, {
+        text: String(number),
+        width: 110,
+        height: 110,
+        correctLevel: QRCode.CorrectLevel.M
+    });
+}
+
+function printMachineQR(machineNumber) {
+    if (typeof QRCode === 'undefined') {
+        alert('مكتبة QR غير متوفرة حالياً. تأكد من وجود الإنترنت ثم أعد تحميل الصفحة.');
+        return;
+    }
+    const holder = document.createElement('div');
+    holder.style.position = 'fixed';
+    holder.style.left = '-10000px';
+    holder.style.top = '0';
+    document.body.appendChild(holder);
+    new QRCode(holder, { text: String(machineNumber), width: 300, height: 300, correctLevel: QRCode.CorrectLevel.M });
+    setTimeout(() => {
+        const img = holder.querySelector('img');
+        const canvas = holder.querySelector('canvas');
+        const src = img ? img.src : (canvas ? canvas.toDataURL('image/png') : '');
+        document.body.removeChild(holder);
+        if (!src) return alert('تعذر تجهيز QR للطباعة.');
+        const win = window.open('', '_blank');
+        if (!win) return alert('المتصفح منع نافذة الطباعة. اسمح بالنوافذ المنبثقة ثم حاول مرة أخرى.');
+        win.document.write(`<html lang="ar" dir="rtl"><head><title>QR ماكينة ${machineNumber}</title><style>body{font-family:Tahoma,Arial;text-align:center;padding:30px}img{width:300px;height:300px}.num{font-size:28px;font-weight:bold;margin-top:15px}</style></head><body><h2>كود QR للماكينة</h2><img src="${src}" alt="QR"><div class="num">ماكينة ${machineNumber}</div><script>window.onload=function(){window.print();}</script></body></html>`);
+        win.document.close();
+    }, 250);
+}
+
+function updateMachineManagementTable() {
+    const tbody = document.querySelector('#machine-management-table tbody');
+    if (!tbody) return;
+    tbody.innerHTML = '';
+    if (!MACHINES.length) {
+        tbody.innerHTML = '<tr><td colspan="6" class="no-data">لا توجد ماكينات في القائمة.</td></tr>';
+        return;
+    }
+    MACHINES.forEach(machine => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td><strong>${machine.number}</strong></td>
+            <td>${machine.stage || '-'}</td>
+            <td>${machine.zone || '-'}</td>
+            <td>${machine.section || '-'}</td>
+            <td><div id="qr-machine-${String(machine.number).replace(/[^a-zA-Z0-9_-]/g, '_')}" style="width:110px; min-height:110px; margin:auto;"></div><div style="font-size:11px; margin-top:3px;">يمسح مباشرة كرقم ${machine.number}</div></td>
+            <td style="white-space:nowrap;">
+                <button class="btn btn-secondary" style="padding:5px 8px; margin:2px;" onclick="editMachine('${String(machine.number).replace(/'/g, "\\'")}')">✏️ تعديل</button>
+                <button class="btn btn-danger" style="padding:5px 8px; margin:2px;" onclick="deleteMachine('${String(machine.number).replace(/'/g, "\\'")}')">🗑 حذف</button>
+                <button class="btn btn-primary" style="padding:5px 8px; margin:2px;" onclick="printMachineQR('${String(machine.number).replace(/'/g, "\\'")}')">🖨️ طباعة QR</button>
+            </td>
+        `;
+        tbody.appendChild(tr);
+        const qrId = `qr-machine-${String(machine.number).replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+        generateMachineQR(document.getElementById(qrId), machine.number);
+    });
+}
+
+window.editMachine = editMachine;
+window.deleteMachine = deleteMachine;
+window.printMachineQR = printMachineQR;
 
 function initClock() {
     const clockEl = document.getElementById("live-clock");
@@ -219,6 +432,7 @@ window.switchAdminTab = function(tabId) {
 
     if (tabId === "tab-indicators") updateIndicators();
     else if (tabId === "tab-machines") updateMachinesPerformanceTable();
+    else if (tabId === "tab-machine-management") updateMachineManagementTable();
     else if (tabId === "tab-pareto") updateParetoTable();
     else if (tabId === "tab-logs") updateFullLogsTable();
 }
@@ -370,6 +584,11 @@ function setupEventListeners() {
 
     const printChartOnlyBtn = document.getElementById("print-chart-only-btn");
     if (printChartOnlyBtn) printChartOnlyBtn.addEventListener("click", printParetoChartOnly);
+
+    const saveMachineBtn = document.getElementById("save-machine-btn");
+    if (saveMachineBtn) saveMachineBtn.addEventListener("click", saveMachineFromAdmin);
+    const cancelMachineEditBtn = document.getElementById("cancel-machine-edit-btn");
+    if (cancelMachineEditBtn) cancelMachineEditBtn.addEventListener("click", clearMachineForm);
 }
 
 function findAndSelectMachine(query, fromScanner = false) {
