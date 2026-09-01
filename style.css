@@ -617,3 +617,7 @@ body {
     .view-mode-switcher { grid-template-columns: 1fr; }
     .header-content h1 { font-size: 1.05rem !important; }
 }
+
+/* فلاتر تقرير أداء الماكينات */
+.machine-performance-filters{width:100%;}
+@media(max-width:768px){.machine-performance-filters{grid-template-columns:1fr!important;}.machine-performance-filters .form-group{width:100%;}#machine-performance-filter-input{min-width:0;}#machine-performance-search-btn{white-space:nowrap;}}
