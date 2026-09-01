@@ -365,6 +365,7 @@ let serverTimeOffsetMs = 0;
 let serverTimeSyncReady = false;
 
 document.addEventListener("DOMContentLoaded", () => {
+    setupMachinePerformanceFilter();
     initClock();
     populateFaultCodes();
     setupRealtimeSync();
@@ -481,6 +482,7 @@ function setupMachineSync() {
             if (clean.length) {
                 MACHINES = clean;
                 saveMachinesLocal(MACHINES);
+                populateMachinePerformanceFilter();
             }
         }
         updateMachineManagementTable();
@@ -500,6 +502,7 @@ function saveMachines(machines) {
 
     MACHINES = safe;
     saveMachinesLocal(safe);
+    populateMachinePerformanceFilter();
 
     if (rtdb) {
         const obj = {};
@@ -969,6 +972,10 @@ function setupEventListeners() {
 
     const cancelFaultCodeBtn = document.getElementById("cancel-fault-code-edit-btn");
     if (cancelFaultCodeBtn) cancelFaultCodeBtn.addEventListener("click", clearFaultCodeForm);
+
+    // زر تصفير سجل الأعطال: يمسح سجلات الأعطال فقط، ولا يلمس الماكينات أو الأكواد أو الإعدادات.
+    const resetAllFaultsBtn = document.getElementById("reset-all-faults-btn");
+    if (resetAllFaultsBtn) resetAllFaultsBtn.addEventListener("click", window.resetAllFaults);
 
 }
 
@@ -1496,7 +1503,52 @@ window.deleteFault = function(faultId) {
     let faults = getStoredFaults();
     faults = faults.filter(f => String(f.id) !== String(faultId));
     saveStoredFaults(faults);
+    updateIndicators();
+    updateMachinesPerformanceTable();
+    updateParetoTable();
+    updateFullLogsTable();
+    renderTechDashboard();
     alert("تم حذف العطل بنجاح.");
+};
+
+// تصفير سجل الأعطال بالكامل من الإدارة، مع مزامنة الحذف مع Firebase وكل التقارير والحسابات.
+window.resetAllFaults = async function() {
+    const faults = getStoredFaults();
+    if (!faults.length) {
+        alert("لا توجد أعطال مسجلة في سجل الأعطال لتصفيتها.");
+        return;
+    }
+    const confirmed = confirm(
+        `⚠️ سيتم حذف جميع سجلات الأعطال الموجودة حاليًا في سجل الأعطال (${faults.length} عطل) نهائيًا.\n\n` +
+        "لن يتم حذف أي ماكينة أو كود عطل أو إعدادات.\n\nهل تريد المتابعة؟"
+    );
+    if (!confirmed) return;
+
+    // نمسح النسخة المحلية والذاكرة فورًا حتى لا تعود الأعطال أثناء التحديث.
+    cachedFaults = [];
+    firebaseFaultsSyncReady = true;
+    localStorage.setItem("factory5_faults_backup", "[]");
+
+    let cloudError = null;
+    try {
+        if (rtdb) {
+            await rtdb.ref('factory5_faults').set({});
+        }
+    } catch (err) {
+        cloudError = err;
+    }
+
+    updateIndicators();
+    updateMachinesPerformanceTable();
+    updateParetoTable();
+    updateFullLogsTable();
+    renderTechDashboard();
+
+    if (cloudError) {
+        alert("⚠️ تم تصفير سجل الأعطال محليًا، لكن تعذر تأكيد الحذف على Firebase. تحقق من الاتصال ثم أعد المحاولة.");
+    } else {
+        alert("✅ تم تصفير سجل الأعطال فقط بنجاح. الماكينات وأكواد الأعطال والإعدادات لم تتأثر.");
+    }
 };
 
 function verifyAdminPassword() {
@@ -1527,20 +1579,235 @@ function updateIndicators() {
     setEl("kpi-total-time", formatDuration(totalDurationSeconds, "seconds"));
 }
 
+// ================================================================
+// حساب نسبة التعطل حسب ساعات تشغيل مصنع 5
+// الوردية الأولى: 07:30 -> 16:00 مع راحة 12:00 -> 13:00
+// الوردية الثانية: 16:00 -> 23:00
+// إجمالي التشغيل اليومي = 14.5 ساعة = 52,200 ثانية
+// ================================================================
+const FACTORY_DAILY_OPERATING_SECONDS = 52200;
+const FACTORY_BREAK_START_HOUR = 12;
+const FACTORY_BREAK_END_HOUR = 13;
+
+function getOperatingIntervalsForDay(dayDate) {
+    const y = dayDate.getFullYear();
+    const m = dayDate.getMonth();
+    const d = dayDate.getDate();
+
+    return [
+        // الوردية الأولى قبل/بعد الراحة
+        [new Date(y, m, d, 7, 30, 0, 0).getTime(), new Date(y, m, d, FACTORY_BREAK_START_HOUR, 0, 0, 0).getTime()],
+        [new Date(y, m, d, FACTORY_BREAK_END_HOUR, 0, 0, 0).getTime(), new Date(y, m, d, 16, 0, 0, 0).getTime()],
+        // الوردية الثانية
+        [new Date(y, m, d, 16, 0, 0, 0).getTime(), new Date(y, m, d, 23, 0, 0, 0).getTime()]
+    ];
+}
+
+// عدد ثواني التشغيل الفعلية بين لحظتين، مع احتساب الورديتين والراحة فقط.
+function getOperatingSecondsBetween(startMs, endMs) {
+    if (!Number.isFinite(Number(startMs)) || !Number.isFinite(Number(endMs))) return 0;
+
+    let start = Number(startMs);
+    let end = Number(endMs);
+    if (end <= start) return 0;
+
+    let totalSeconds = 0;
+    const startDate = new Date(start);
+    const endDate = new Date(end);
+
+    // نمشي يومًا بيوم حتى لا نحتسب الليل أو وقت الراحة.
+    const cursor = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate());
+    const lastDay = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate());
+
+    while (cursor.getTime() <= lastDay.getTime()) {
+        const intervals = getOperatingIntervalsForDay(cursor);
+
+        intervals.forEach(([intervalStart, intervalEnd]) => {
+            const overlapStart = Math.max(start, intervalStart);
+            const overlapEnd = Math.min(end, intervalEnd);
+            if (overlapEnd > overlapStart) {
+                totalSeconds += (overlapEnd - overlapStart) / 1000;
+            }
+        });
+
+        cursor.setDate(cursor.getDate() + 1);
+    }
+
+    return Math.max(0, totalSeconds);
+}
+
+// وقت التشغيل الفعلي من بداية الشهر الحالي وحتى اللحظة الحالية.
+// مثال: يوم 4 الساعة 08:00 => 3 أيام كاملة + 30 دقيقة فقط من اليوم الرابع.
+function getCurrentMonthOperatingSeconds(nowMs = getSynchronizedNow()) {
+    const now = new Date(nowMs);
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0).getTime();
+    return getOperatingSecondsBetween(monthStart, nowMs);
+}
+
+// وقت التشغيل الفعلي لليوم الحالي فقط.
+function getTodayOperatingSeconds(nowMs = getSynchronizedNow()) {
+    const now = new Date(nowMs);
+    const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0).getTime();
+    return getOperatingSecondsBetween(dayStart, nowMs);
+}
+
+// حساب مدة توقف العطل داخل نافذة زمنية، مع احتساب وقت التشغيل فقط.
+// هذا يمنع احتساب وقت الليل أو ساعة الراحة إذا امتد العطل خلالها.
+function getFaultOperatingSeconds(fault, windowStartMs, windowEndMs, nowMs = getSynchronizedNow()) {
+    if (!fault) return 0;
+
+    const faultStart = Number(fault.startTime);
+    if (!Number.isFinite(faultStart)) return 0;
+
+    const faultEndRaw = Number(fault.endTime);
+    const faultEnd = Number.isFinite(faultEndRaw) ? faultEndRaw : nowMs;
+
+    const start = Math.max(faultStart, Number(windowStartMs));
+    const end = Math.min(faultEnd, Number(windowEndMs), nowMs);
+
+    if (end <= start) return 0;
+
+    return getOperatingSecondsBetween(start, end);
+}
+
+// إجمالي وقت توقف ماكينة خلال الشهر الحالي فقط.
+function getMachineMonthlyDowntimeSeconds(machineFaults, nowMs = getSynchronizedNow()) {
+    const now = new Date(nowMs);
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0).getTime();
+
+    return machineFaults.reduce((sum, fault) => {
+        // السجلات القديمة التي لا تحتوي startTime لا يمكن تقسيمها زمنيًا،
+        // لذلك نحافظ على مدتها كما هي حتى لا تضيع أي بيانات.
+        if (!Number.isFinite(Number(fault.startTime))) {
+            return sum + getFaultDurationSeconds(fault, nowMs);
+        }
+        return sum + getFaultOperatingSeconds(fault, monthStart, nowMs, nowMs);
+    }, 0);
+}
+
+// إجمالي وقت توقف ماكينة خلال اليوم الحالي فقط.
+function getMachineDailyDowntimeSeconds(machineFaults, nowMs = getSynchronizedNow()) {
+    const now = new Date(nowMs);
+    const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0).getTime();
+
+    return machineFaults.reduce((sum, fault) => {
+        if (!Number.isFinite(Number(fault.startTime))) return sum;
+        return sum + getFaultOperatingSeconds(fault, dayStart, nowMs, nowMs);
+    }, 0);
+}
+
+function calculateDailyStopRatio(machineFaults, nowMs = getSynchronizedNow()) {
+    // النسبة اليومية المطلوبة: إجمالي توقف الماكينة خلال اليوم الحالي
+    // ÷ 52,200 ثانية (إجمالي تشغيل الماكينة في اليوم) × 100.
+    const downtimeSeconds = getMachineDailyDowntimeSeconds(machineFaults, nowMs);
+    return (downtimeSeconds / FACTORY_DAILY_OPERATING_SECONDS) * 100;
+}
+
+function calculateMonthlyStopRatio(machineFaults, nowMs = getSynchronizedNow()) {
+    // النسبة الشهرية حتى اللحظة الحالية: إجمالي توقف الماكينة منذ يوم 1
+    // ÷ وقت التشغيل الفعلي للمصنع منذ يوم 1 وحتى اللحظة الحالية × 100.
+    const operatingSeconds = getCurrentMonthOperatingSeconds(nowMs);
+    if (operatingSeconds <= 0) return 0;
+
+    const downtimeSeconds = getMachineMonthlyDowntimeSeconds(machineFaults, nowMs);
+    return (downtimeSeconds / operatingSeconds) * 100;
+}
+
+function populateMachinePerformanceFilter() {
+    const select = document.getElementById('machine-performance-filter');
+    if (!select) return;
+
+    const currentValue = String(select.value || '');
+    const numbers = [...new Set((Array.isArray(MACHINES) ? MACHINES : [])
+        .map(m => String(m && m.number !== undefined ? m.number : '').trim())
+        .filter(Boolean))]
+        .sort((a, b) => a.localeCompare(b, 'ar', { numeric: true }));
+
+    select.innerHTML = '<option value="">كل الماكينات</option>' +
+        numbers.map(number => `<option value="${number.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}">${number}</option>`).join('');
+
+    if (numbers.includes(currentValue)) select.value = currentValue;
+    else select.value = '';
+}
+
+function setupMachinePerformanceFilter() {
+    const input = document.getElementById('machine-performance-search');
+    const searchBtn = document.getElementById('machine-performance-search-btn');
+    const clearBtn = document.getElementById('machine-performance-clear-btn');
+    const dateFrom = document.getElementById('machine-performance-date-from');
+    const dateTo = document.getElementById('machine-performance-date-to');
+    if (!input || input.dataset.bound === '1') return;
+    input.dataset.bound = '1';
+    const run = () => updateMachinesPerformanceTable();
+    if (searchBtn) searchBtn.addEventListener('click', run);
+    if (clearBtn) clearBtn.addEventListener('click', () => {
+        input.value = '';
+        if (dateFrom) dateFrom.value = '';
+        if (dateTo) dateTo.value = '';
+        run();
+    });
+    input.addEventListener('keydown', e => { if (e.key === 'Enter') run(); });
+    input.addEventListener('input', () => { if (!input.value.trim()) run(); });
+    if (dateFrom) dateFrom.addEventListener('change', run);
+    if (dateTo) dateTo.addEventListener('change', run);
+}
+
+function getPerformanceFaultDate(fault) {
+    if (!fault || !Number.isFinite(Number(fault.startTime))) return '';
+    const d = new Date(Number(fault.startTime));
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+}
+
 function updateMachinesPerformanceTable() {
     const faults = getStoredFaults();
     const tbody = document.querySelector("#machines-performance-table tbody");
     if (!tbody) return;
-    tbody.innerHTML = "";
-    const totalFactoryTime = faults.reduce((sum, f) => sum + getFaultDurationSeconds(f), 0) || 1;
 
-    MACHINES.forEach(machine => {
-        const mFaults = faults.filter(f => f.machineNumber === machine.number);
+    setupMachinePerformanceFilter();
+
+    const input = document.getElementById('machine-performance-search');
+    const dateFromEl = document.getElementById('machine-performance-date-from');
+    const dateToEl = document.getElementById('machine-performance-date-to');
+    const statusEl = document.getElementById('machine-performance-filter-status');
+    const selectedMachine = input ? String(input.value || '').trim() : '';
+    const dateFrom = dateFromEl ? dateFromEl.value : '';
+    const dateTo = dateToEl ? dateToEl.value : '';
+    tbody.innerHTML = "";
+
+    if (dateFrom && dateTo && dateFrom > dateTo) {
+        if (statusEl) statusEl.textContent = '⚠️ تاريخ البداية يجب أن يكون قبل تاريخ النهاية.';
+        return;
+    }
+
+    const currentNow = getSynchronizedNow();
+    const machinesToRender = selectedMachine
+        ? MACHINES.filter(machine => String(machine.number) === selectedMachine)
+        : MACHINES;
+
+    if (selectedMachine && !machinesToRender.length) {
+        if (statusEl) statusEl.textContent = `❌ لا توجد ماكينة برقم ${selectedMachine} ضمن قائمة الماكينات.`;
+        return;
+    }
+
+    machinesToRender.forEach(machine => {
+        const mFaults = faults.filter(f => {
+            if (String(f.machineNumber) !== String(machine.number)) return false;
+            const fd = getPerformanceFaultDate(f);
+            if (dateFrom && (!fd || fd < dateFrom)) return false;
+            if (dateTo && (!fd || fd > dateTo)) return false;
+            return true;
+        });
         const count = mFaults.length;
-        const totalDuration = mFaults.reduce((sum, f) => sum + getFaultDurationSeconds(f), 0);
+        const totalDuration = mFaults.reduce((sum, f) => sum + getFaultDurationSeconds(f, currentNow), 0);
         const avgDuration = count > 0 ? totalDuration / count : 0;
-        const maxDuration = count > 0 ? Math.max(...mFaults.map(f => getFaultDurationSeconds(f))) : 0;
-        const stopRatio = ((totalDuration / totalFactoryTime) * 100).toFixed(1);
+        const maxDuration = count > 0 ? Math.max(...mFaults.map(f => getFaultDurationSeconds(f, currentNow))) : 0;
+
+        // النسب الحالية للمؤشرات الرئيسية تظل كما هي، ولا تتأثر بفلاتر التاريخ حتى لا نغيّر منطق الحساب الموجود بالمشروع.
+        const dailyStopRatio = calculateDailyStopRatio(mFaults, currentNow);
+        const monthlyStopRatio = calculateMonthlyStopRatio(mFaults, currentNow);
 
         const tr = document.createElement("tr");
         tr.innerHTML = `
@@ -1552,10 +1819,17 @@ function updateMachinesPerformanceTable() {
             <td>${formatDuration(totalDuration, "seconds")}</td>
             <td>${formatDuration(avgDuration, "seconds")}</td>
             <td>${formatDuration(maxDuration, "seconds")}</td>
-            <td>${stopRatio}%</td>
+            <td>${dailyStopRatio.toFixed(1)}%</td>
+            <td>${monthlyStopRatio.toFixed(1)}%</td>
         `;
         tbody.appendChild(tr);
     });
+
+    if (statusEl) {
+        const machineText = selectedMachine ? `الماكينة ${selectedMachine}` : 'كل الماكينات';
+        const dateText = dateFrom || dateTo ? ` | الفترة: ${dateFrom || 'البداية'} → ${dateTo || 'النهاية'}` : '';
+        statusEl.textContent = `🔎 ${machineText}${dateText}`;
+    }
 }
 
 function applyAdvancedSearch() {
@@ -1670,11 +1944,38 @@ function renderParetoChart(labels, durations, cumulative) {
         options: {
             responsive: true,
             maintainAspectRatio: false,
+            layout: { padding: { top: 12, bottom: 28 } },
             scales: {
                 y: { type: 'linear', position: 'left', beginAtZero: true },
                 y1: { type: 'linear', position: 'right', max: 100, grid: { drawOnChartArea: false }, beginAtZero: true }
+            },
+            plugins: {
+                // إظهار النسبة الرقمية أسفل كل نقطة من خط النسبة التراكمية،
+                // وتظهر أيضًا عند طباعة الرسم لأن الرسم المطبوع يعتمد على نفس الـcanvas.
+                paretoPointPercentLabels: { enabled: true }
             }
-        }
+        },
+        plugins: [{
+            id: 'paretoPointPercentLabels',
+            afterDatasetsDraw(chart) {
+                const datasetIndex = chart.data.datasets.findIndex(ds => ds && ds.type === 'line');
+                if (datasetIndex < 0) return;
+                const meta = chart.getDatasetMeta(datasetIndex);
+                const dataset = chart.data.datasets[datasetIndex];
+                const ctx = chart.ctx;
+                ctx.save();
+                ctx.font = 'bold 12px Arial';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'top';
+                ctx.fillStyle = '#111827';
+                meta.data.forEach((point, index) => {
+                    const value = dataset.data[index];
+                    if (value === undefined || value === null || !Number.isFinite(Number(value))) return;
+                    ctx.fillText(`${Number(value).toFixed(1)}%`, point.x, point.y + 8);
+                });
+                ctx.restore();
+            }
+        }]
     });
 }
 
