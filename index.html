@@ -195,23 +195,25 @@
             <div id="tab-machines" class="tab-pane">
                 <h3 style="color: #334155; margin-bottom: 10px;">تقرير أداء ومعدلات أعطال الماكينات</h3>
                 <div class="form-group" style="margin-bottom: 15px;">
-                    <label for="machine-performance-search" style="display: block; margin-bottom: 5px; color: #334155; font-weight: bold;">بحث برقم الماكينة:</label>
+                    <label style="display:block; margin-bottom:5px; color:#334155; font-weight:bold;">🔎 البحث برقم الماكينة:</label>
                     <div style="display:flex; gap:8px; flex-wrap:wrap;">
-                        <input id="machine-performance-search" class="form-control" type="text" inputmode="numeric" placeholder="اكتب رقم الماكينة ثم بحث" style="flex:1; min-width:220px; padding:8px; border:1px solid #cbd5e1; border-radius:4px;">
+                        <input id="machine-performance-filter-input" class="form-control" type="text" inputmode="numeric" placeholder="اكتب رقم الماكينة ثم بحث" style="flex:1; min-width:220px; padding:8px; border:1px solid #cbd5e1; border-radius:4px;">
                         <button id="machine-performance-search-btn" class="btn btn-primary" type="button">🔎 بحث</button>
-                        <button id="machine-performance-clear-btn" class="btn btn-secondary" type="button">↩️ إظهار الكل</button>
+                        <button id="machine-performance-reset-btn" class="btn btn-secondary" type="button">↩️ إظهار الكل</button>
                     </div>
                     <div style="margin-top:10px; display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:10px;">
                         <div>
-                            <label for="machine-performance-date-from" style="display:block; margin-bottom:5px; color:#334155; font-weight:bold;">من تاريخ:</label>
+                            <label for="machine-performance-date-from" style="display:block; margin-bottom:5px; color:#334155; font-weight:bold;">📅 من تاريخ:</label>
                             <input id="machine-performance-date-from" class="form-control" type="date">
                         </div>
                         <div>
-                            <label for="machine-performance-date-to" style="display:block; margin-bottom:5px; color:#334155; font-weight:bold;">إلى تاريخ:</label>
+                            <label for="machine-performance-date-to" style="display:block; margin-bottom:5px; color:#334155; font-weight:bold;">📅 إلى تاريخ:</label>
                             <input id="machine-performance-date-to" class="form-control" type="date">
                         </div>
                     </div>
                     <div id="machine-performance-filter-status" style="margin-top:8px; color:#475569; font-size:13px;"></div>
+                    <div id="machine-performance-summary" class="hidden" style="margin-top:10px;"></div>
+                    <select id="machine-performance-filter" class="hidden" aria-hidden="true"><option value="">كل الماكينات</option></select>
                 </div>
                 <div class="table-responsive">
                     <table id="machines-performance-table" class="data-table">
@@ -231,6 +233,19 @@
                         </thead>
                         <tbody></tbody>
                     </table>
+                </div>
+                <div class="card" style="margin-top:18px; background:#fff; padding:15px; border:1px solid #cbd5e1; border-radius:8px;">
+                    <h4 style="margin-top:0; color:#334155;">📅 تفاصيل الأيام داخل الفترة المحددة</h4>
+                    <div class="table-responsive">
+                        <table id="machine-daily-details-table" class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>التاريخ</th><th>عدد الأعطال</th><th>إجمالي وقت التوقف</th><th>متوسط وقت الإصلاح</th><th>أقصى وقت توقف</th><th>نسبة التعطل اليومي</th>
+                                </tr>
+                            </thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
                 </div>
             </div>
 
