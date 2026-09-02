@@ -20,6 +20,32 @@
 </head>
 <body>
 
+
+    <!-- ================= شاشة الدخول الرئيسية للنظام ================= -->
+    <div id="initial-login-page" class="initial-login-page" dir="rtl">
+        <div class="initial-login-card">
+            <div class="initial-login-logo"><img src="acrow-logo.png" alt="ACROW Formwor Technology"></div>
+            <h1>نظام الأعطال بشركة <span>ACROW</span></h1>
+            <p class="initial-login-subtitle">إدارة ومتابعة أعطال الماكينات والصيانة</p>
+
+            <div class="initial-role-switcher" id="initial-role-switcher">
+                <button type="button" class="initial-role-btn active" data-role="worker">👷 تسجيل الأعطال</button>
+                <button type="button" class="initial-role-btn" data-role="tech">🛠️ إدارة الصيانة</button>
+                <button type="button" class="initial-role-btn" data-role="leader">👨‍💼 قائد الفريق</button>
+                <button type="button" class="initial-role-btn" data-role="admin">📊 لوحة الإدارة</button>
+            </div>
+
+            <div id="initial-password-wrap" class="initial-password-wrap hidden">
+                <label for="initial-password-input">كلمة المرور</label>
+                <input type="password" id="initial-password-input" placeholder="أدخل كلمة المرور" autocomplete="off" inputmode="numeric">
+                <p id="initial-login-error" class="initial-login-error hidden">كلمة المرور غير صحيحة!</p>
+            </div>
+
+            <button type="button" id="initial-login-submit" class="initial-login-submit">دخول النظام</button>
+            <p id="initial-login-hint" class="initial-login-hint">تسجيل الأعطال متاح للعامل مباشرة بدون كلمة مرور.</p>
+        </div>
+    </div>
+
     <!-- الهيدر العلوي -->
     <header class="app-header">
         <div class="header-content">
@@ -36,7 +62,8 @@
         <!-- أزرار تبديل الواجهات (عمال / فنيين) -->
         <div class="view-mode-switcher" style="margin-bottom: 20px;">
             <button id="switch-worker-view" class="btn btn-primary active-mode-btn">👷 واجهة تسجيل العمال</button>
-            <button id="switch-tech-view" class="btn btn-outline">🛠️ واجهة شاشات الفنيين</button>
+            <button id="switch-tech-view" class="btn btn-outline">🛠️ إدارة الصيانة / شاشات الفنيين</button>
+            <button id="switch-leader-view" class="btn btn-outline">👨‍💼 واجهة قائد الفريق</button>
         </div>
 
         <!-- ================= واجهة تسجيل العمال (الوضع الافتراضي) ================= -->
@@ -89,7 +116,7 @@
 
         <!-- ================= واجهة شاشات الفنيين المستقلة (تظهر للفنيين فقط) ================= -->
         <section id="tech-dashboard-section" class="hidden">
-            <h2 style="text-align: center; color: #1e293b; margin-bottom: 10px;">🛠️ شاشة الأعطال الفنية والصيانة المستقلة</h2>
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:10px;"><h2 style="text-align: center; color: #1e293b; margin: 0; flex:1;">🛠️ شاشة الأعطال الفنية والصيانة المستقلة</h2><button id="logout-maintenance-btn" class="btn btn-danger" style="background:#dc2626;color:#fff;">🚪 خروج إدارة الصيانة</button></div>
             <p style="text-align: center; color: #475569; margin-bottom: 20px; font-weight: 500;">الأعطال الإدارية والتشغيلية (مثل انقطاع الكهرباء والأكواد الإدارية) مسجلة لدى العمال ولا تظهر هنا.</p>
             
             <!-- شبكة الشاشات المستقلة للأعطال الفنية -->
@@ -134,6 +161,15 @@
             </div>
         </section>
 
+        <!-- ================= واجهة قائد الفريق ================= -->
+        <section id="team-leader-dashboard-section" class="hidden" style="margin-top: 20px;">
+            <div class="card" style="background:#fff; padding:20px; border-radius:8px; box-shadow:0 2px 4px rgba(0,0,0,0.1); border-top:5px solid #16a34a;">
+                <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:8px;"><h2 style="text-align:center; color:#166534; margin:0; flex:1;">👨‍💼 شاشة قائد الفريق</h2><button id="logout-team-leader-btn" class="btn btn-danger" style="background:#dc2626;color:#fff;">🚪 خروج قائد الفريق</button></div>
+                <p style="text-align:center; color:#475569; margin-bottom:20px;">الماكينات التي أنهى الفني إصلاحها وتنتظر تأكيد استلام قائد الفريق.</p>
+                <div id="team-leader-pending-faults" class="faults-grid"></div>
+            </div>
+        </section>
+
         <!-- ================= قائمة الأعطال المفتوحة الحالية (تظهر في واجهة العمال) ================= -->
         <section id="worker-active-faults-section" style="margin-top: 30px;">
             <h2 style="color: #1e293b; margin-bottom: 15px;">الأعطال المفتوحة حالياً</h2>
@@ -162,6 +198,7 @@
                 <button class="tab-btn" data-tab="tab-machine-management" style="padding: 8px 12px; cursor: pointer;">قائمة الماكينات و QR</button>
                 <button class="tab-btn" data-tab="tab-fault-code-management" style="padding: 8px 12px; cursor: pointer;">إدارة أكواد الأعطال</button>
                 <button class="tab-btn" data-tab="tab-tech-screen-management" style="padding: 8px 12px; cursor: pointer;">إدارة شاشات الفنيين</button>
+                <button class="tab-btn" data-tab="tab-formula-settings" style="padding: 8px 12px; cursor: pointer;">⚙️ إعدادات المعادلات</button>
                 <button class="tab-btn" data-tab="tab-pareto" style="padding: 8px 12px; cursor: pointer;">تحليل Pareto</button>
                 <button class="tab-btn" data-tab="tab-search" style="padding: 8px 12px; cursor: pointer;">بحث متقدم</button>
                 <button class="tab-btn" data-tab="tab-reports" style="padding: 8px 12px; cursor: pointer;">تقارير الطباعة</button>
@@ -236,11 +273,21 @@
                 </div>
                 <div class="card" style="margin-top:18px; background:#fff; padding:15px; border:1px solid #cbd5e1; border-radius:8px;">
                     <h4 style="margin-top:0; color:#334155;">📅 تفاصيل الأيام داخل الفترة المحددة</h4>
+                    <div class="machine-shift-info">
+                        <span>🕐 الوردية الأولى: 07:30 → 16:00 (راحة 12:00 → 13:00)</span>
+                        <span>🕐 الوردية الثانية: 16:00 → 23:00</span>
+                    </div>
                     <div class="table-responsive">
-                        <table id="machine-daily-details-table" class="data-table">
+                        <table id="machine-daily-details-table" class="data-table machine-daily-details-table">
                             <thead>
                                 <tr>
-                                    <th>التاريخ</th><th>عدد الأعطال</th><th>إجمالي وقت التوقف</th><th>متوسط وقت الإصلاح</th><th>أقصى وقت توقف</th><th>نسبة التعطل اليومي</th>
+                                    <th>التاريخ</th>
+                                    <th>عدد الأعطال</th>
+                                    <th>إجمالي توقف اليوم</th>
+                                    <th>الوردية الأولى<br><small>التوقف / النسبة</small></th>
+                                    <th>الوردية الثانية<br><small>التوقف / النسبة</small></th>
+                                    <th>نسبة التعطل اليومي</th>
+                                    <th>تفاصيل الأعطال</th>
                                 </tr>
                             </thead>
                             <tbody></tbody>
@@ -353,6 +400,56 @@
                     <p id="tech-screen-management-status" style="margin:10px 0 0;font-weight:bold;"></p>
                 </div>
                 <div class="table-responsive"><table id="tech-screens-management-table" class="data-table"><thead><tr><th>الشاشة</th><th>الأكواد</th><th>إجراءات</th></tr></thead><tbody></tbody></table></div>
+            </div>
+
+            <!-- إعدادات المعادلات -->
+            <div id="tab-formula-settings" class="tab-pane">
+                <h3 style="color:#334155; margin-bottom:10px;">⚙️ إعدادات معادلات التقارير</h3>
+                <p style="color:#475569; line-height:1.8; margin-bottom:15px;">من هنا تقدر تكتب المعادلة بنفسك. النظام يسمح فقط بالأرقام والمتغيرات والعمليات الحسابية، ويتم حفظ الإعدادات ومزامنتها مع Firebase. لا يتم حذف أو تعديل بيانات الأعطال.</p>
+
+                <div class="card formula-settings-card">
+                    <h4 style="margin-top:0;color:#1e293b;">📌 المتغيرات المتاحة داخل المعادلة</h4>
+                    <div class="formula-variables-grid">
+                        <div><code>downtime</code><span>وقت التوقف بالثواني</span></div>
+                        <div><code>operating</code><span>وقت التشغيل بالثواني</span></div>
+                        <div><code>totalDowntime</code><span>إجمالي التوقف</span></div>
+                        <div><code>dailyOperating</code><span>وقت تشغيل اليوم</span></div>
+                        <div><code>shift1Downtime</code><span>توقف الوردية الأولى</span></div>
+                        <div><code>shift2Downtime</code><span>توقف الوردية الثانية</span></div>
+                        <div><code>shift1Operating</code><span>تشغيل الوردية الأولى</span></div>
+                        <div><code>shift2Operating</code><span>تشغيل الوردية الثانية</span></div>
+                        <div><code>100</code><span>لتحويل الناتج إلى نسبة مئوية</span></div>
+                    </div>
+                    <p class="formula-help">مثال: <code>downtime / operating * 100</code> أو <code>(downtime / operating) * 100</code>. ويمكنك استخدام <code>×</code> بدل <code>*</code> و<code>÷</code> بدل <code>/</code>.</p>
+                </div>
+
+                <div class="card formula-settings-card">
+                    <div class="formula-setting-row">
+                        <label for="formula-daily">نسبة التعطل اليومية:</label>
+                        <input id="formula-daily" class="form-control formula-input" type="text" dir="ltr" autocomplete="off">
+                        <small>الافتراضي: <code>downtime / 52200 * 100</code></small>
+                    </div>
+                    <div class="formula-setting-row">
+                        <label for="formula-shift1">نسبة تعطل الوردية الأولى:</label>
+                        <input id="formula-shift1" class="form-control formula-input" type="text" dir="ltr" autocomplete="off">
+                        <small>الافتراضي: <code>shift1Downtime / shift1Operating * 100</code></small>
+                    </div>
+                    <div class="formula-setting-row">
+                        <label for="formula-shift2">نسبة تعطل الوردية الثانية:</label>
+                        <input id="formula-shift2" class="form-control formula-input" type="text" dir="ltr" autocomplete="off">
+                        <small>الافتراضي: <code>shift2Downtime / shift2Operating * 100</code></small>
+                    </div>
+                    <div class="formula-setting-row">
+                        <label for="formula-monthly">النسبة الشهرية:</label>
+                        <input id="formula-monthly" class="form-control formula-input" type="text" dir="ltr" autocomplete="off">
+                        <small>الافتراضي: <code>downtime / operating * 100</code></small>
+                    </div>
+                    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:15px;">
+                        <button id="save-formula-settings-btn" class="btn btn-success">💾 حفظ المعادلات</button>
+                        <button id="reset-formula-settings-btn" class="btn btn-secondary">↩️ استرجاع المعادلات الأصلية</button>
+                    </div>
+                    <p id="formula-settings-status" style="margin:10px 0 0;font-weight:bold;"></p>
+                </div>
             </div>
 
             <!-- 3. تحليل Pareto -->
@@ -501,12 +598,26 @@
 
     </main>
 
-    <!-- نافذة تسجيل الدخول للإدارة -->
+    <!-- شاشة تسجيل الدخول المستقلة لكل واجهة محمية -->
+    <div id="screen-login-page" class="screen-login-page hidden" dir="rtl">
+        <div class="screen-login-card">
+            <div class="screen-login-icon">🔐</div>
+            <h2 id="screen-login-title">تسجيل الدخول</h2>
+            <p id="screen-login-description">أدخل كلمة المرور للدخول إلى الشاشة</p>
+            <label for="screen-password-input">كلمة المرور</label>
+            <input type="password" id="screen-password-input" class="form-control" placeholder="أدخل كلمة المرور" autocomplete="off" inputmode="numeric">
+            <p id="screen-login-error" class="screen-login-error hidden">كلمة المرور غير صحيحة!</p>
+            <button id="screen-login-submit" class="btn btn-primary screen-login-submit">دخول</button>
+            <button id="screen-login-cancel" class="btn btn-outline screen-login-cancel">رجوع</button>
+        </div>
+    </div>
+
+    <!-- نافذة تسجيل الدخول الموحدة للواجهات المحمية -->
     <div id="login-modal" class="modal hidden">
         <div class="modal-content">
-            <h3>تسجيل دخول الإدارة</h3>
-            <p>أدخل كلمة المرور الخاصة بلوحة التحكم:</p>
-            <input type="password" id="admin-password-input" class="form-control" placeholder="كلمة المرور">
+            <h3 id="login-modal-title">تسجيل الدخول</h3>
+            <p id="login-modal-description">أدخل كلمة المرور للدخول إلى الشاشة:</p>
+            <input type="password" id="admin-password-input" class="form-control" placeholder="كلمة المرور" autocomplete="off">
             <p id="login-error-msg" class="error-text hidden">كلمة المرور غير صحيحة!</p>
             <div class="modal-actions" style="margin-top: 15px; display: flex; gap: 10px;">
                 <button id="submit-login-btn" class="btn btn-primary" style="flex: 1;">دخول</button>
@@ -541,6 +652,6 @@
         </table>
     </div>
 
-    <script src="script.js?v=20260901-reset-pareto-labels"></script>
+    <script src="script.js?v=20260902-teamleader-fixed-v2"></script>
 </body>
 </html>
