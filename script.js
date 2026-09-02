@@ -198,7 +198,7 @@ function renderTechDashboard(){
     const section=document.getElementById('tech-dashboard-section'); if(!section)return;
     const grid=section.querySelector('[data-tech-dynamic-grid]') || section.querySelector('div[style*="grid-template-columns"]'); if(!grid)return;
     grid.setAttribute('data-tech-dynamic-grid','1');
-    const activeFaults=getStoredFaults().filter(f=>f.status==='active');
+    const activeFaults=getStoredFaults().filter(f=>f.status==='active'||f.status==='awaiting_leader_receipt');
     grid.innerHTML='';
     TECH_SCREENS.forEach(sc=>{
         const box=document.createElement('div'); box.style.cssText='background:#fff;padding:15px;border-radius:8px;border-top:5px solid #64748b;box-shadow:0 2px 4px rgba(0,0,0,0.1);';
@@ -211,8 +211,53 @@ function renderTechDashboard(){
 }
 function createTechFaultCardHTML(fault){
     const start=fault.startTime?new Date(fault.startTime).toLocaleTimeString('ar-EG'):'-'; const dur=fault.startTime?formatDuration(getFaultDurationSeconds(fault),'seconds'):'0 ثانية';
-    return `<div class="fault-card" data-fault-id="${fault.id}" style="background:#fff;border:1px solid #cbd5e1;padding:12px;border-radius:6px;margin-bottom:10px;"><div style="font-weight:bold;color:#dc2626;margin-bottom:8px;">🔴 ماكينة عطلانة: ${fault.machineNumber||'غير معروف'}</div><div style="font-size:13px;color:#334155;margin-bottom:10px;"><p style="margin:3px 0;"><strong>المرحلة:</strong> ${fault.machineStage||'-'}</p><p style="margin:3px 0;"><strong>القسم:</strong> ${fault.machineSection||'-'} (${fault.machineZone||'-'})</p><p style="margin:3px 0;"><strong>العطل:</strong> كود ${fault.faultCode||'-'} — ${fault.faultName||'-'}</p><p style="margin:3px 0;"><strong>وقت البداية:</strong> ${start}</p><p style="margin:3px 0;"><strong>مدة التوقف:</strong> <span class="elapsed-time">${dur}</span></p>${fault.notes?`<p style="margin:3px 0;"><strong>ملاحظات:</strong> ${fault.notes}</p>`:''}</div><button class="btn btn-success btn-block" style="width:100%;padding:6px;" onclick="endFault('${fault.id}')">✅ تم الإصلاح وإنهاء العطل</button></div>`;
+    const waiting = fault.status === 'awaiting_leader_receipt';
+    const statusHtml = waiting
+        ? `<div style="background:#fef3c7;color:#92400e;border:1px solid #f59e0b;padding:8px;border-radius:6px;font-weight:bold;text-align:center;margin-bottom:10px;">🟡 تم إنهاء العطل — في انتظار استلام قائد الفريق</div>`
+        : `<button class="btn btn-success btn-block" style="width:100%;padding:6px;" onclick="endFault('${fault.id}')">✅ تم الإصلاح وإنهاء العطل</button>`;
+    return `<div class="fault-card" data-fault-id="${fault.id}" style="background:#fff;border:1px solid ${waiting?'#f59e0b':'#cbd5e1'};padding:12px;border-radius:6px;margin-bottom:10px;"><div style="font-weight:bold;color:${waiting?'#92400e':'#dc2626'};margin-bottom:8px;">${waiting?'🟡':'🔴'} ماكينة: ${fault.machineNumber||'غير معروف'}</div><div style="font-size:13px;color:#334155;margin-bottom:10px;"><p style="margin:3px 0;"><strong>المرحلة:</strong> ${fault.machineStage||'-'}</p><p style="margin:3px 0;"><strong>القسم:</strong> ${fault.machineSection||'-'} (${fault.machineZone||'-'})</p><p style="margin:3px 0;"><strong>العطل:</strong> كود ${fault.faultCode||'-'} — ${fault.faultName||'-'}</p><p style="margin:3px 0;"><strong>وقت البداية:</strong> ${start}</p><p style="margin:3px 0;"><strong>مدة التوقف:</strong> <span class="elapsed-time">${dur}</span></p>${waiting&&fault.endTime?`<p style="margin:3px 0;"><strong>وقت إنهاء الفني:</strong> ${new Date(fault.endTime).toLocaleTimeString('ar-EG')}</p>`:''}${fault.notes?`<p style="margin:3px 0;"><strong>ملاحظات:</strong> ${fault.notes}</p>`:''}</div>${statusHtml}</div>`;
 }
+
+function renderTeamLeaderDashboard(){
+    const container=document.getElementById('team-leader-pending-faults');
+    if(!container)return;
+    const pending=getStoredFaults().filter(f=>f.status==='awaiting_leader_receipt');
+    if(!pending.length){
+        container.innerHTML='<p class="no-data" style="color:#64748b;text-align:center;padding:20px;">✅ لا توجد ماكينات في انتظار الاستلام من قائد الفريق.</p>';
+        return;
+    }
+    container.innerHTML=pending.map(f=>{
+        const start=f.startTime?new Date(f.startTime).toLocaleTimeString('ar-EG'):'-';
+        const end=(f.technicianEndTime||f.endTime)?new Date(f.technicianEndTime||f.endTime).toLocaleTimeString('ar-EG'):'-';
+        const dur=formatDuration(getFaultDurationSeconds(f),'seconds');
+        return `<div class="fault-card" data-fault-id="${f.id}" style="background:#fff;border:2px solid #f59e0b;padding:14px;border-radius:8px;margin-bottom:12px;"><div style="font-weight:bold;color:#92400e;font-size:16px;margin-bottom:10px;">🟡 ماكينة جاهزة للاستلام: ${f.machineNumber||'غير معروف'}</div><div style="font-size:13px;color:#334155;margin-bottom:12px;"><p style="margin:4px 0;"><strong>المرحلة:</strong> ${f.machineStage||'-'}</p><p style="margin:4px 0;"><strong>القسم:</strong> ${f.machineSection||'-'} (${f.machineZone||'-'})</p><p style="margin:4px 0;"><strong>العطل:</strong> كود ${f.faultCode||'-'} — ${f.faultName||'-'}</p><p style="margin:4px 0;"><strong>بداية العطل:</strong> ${start}</p><p style="margin:4px 0;"><strong>انتهاء الفني:</strong> ${end}</p><p style="margin:4px 0;"><strong>إجمالي مدة التوقف:</strong> <span class="elapsed-time">${dur}</span></p>${f.notes?`<p style="margin:4px 0;"><strong>ملاحظات:</strong> ${f.notes}</p>`:''}</div><button class="btn btn-success btn-block" style="width:100%;padding:9px;font-weight:bold;" onclick="receiveMachineByTeamLeader('${f.id}')">✅ تم استلام الماكينة من الفني</button></div>`;
+    }).join('');
+}
+
+window.receiveMachineByTeamLeader=function(faultId){
+    const key=String(faultId);
+    const faults=getStoredFaults();
+    const fault=faults.find(f=>String(f.id)===key);
+    if(!fault||fault.status!=='awaiting_leader_receipt'){
+        renderTeamLeaderDashboard();
+        return;
+    }
+    // هنا فقط يتوقف العداد وتُثبت المدة النهائية للعطل.
+    const receiptTime = getSynchronizedNow();
+    fault.endTime = receiptTime;
+    fault.leaderReceiptTime = receiptTime;
+    fault.durationSeconds = Number.isFinite(Number(fault.startTime))
+        ? Math.max(0, (receiptTime - Number(fault.startTime)) / 1000)
+        : Math.max(0, Number(fault.durationSeconds) || 0);
+    fault.durationMinutes = fault.durationSeconds / 60;
+    fault.receivedBy='قائد الفريق';
+    fault.status='finished';
+    saveStoredFaults(faults);
+    loadFaultsFromStorage();
+    renderTechDashboard();
+    renderTeamLeaderDashboard();
+    alert(`✅ تم استلام الماكينة ${fault.machineNumber||''} من الفني وتسجيلها كمغلقة نهائياً.`);
+};
 
 let faultCodesSyncReady = false;
 
@@ -356,6 +401,167 @@ function updateFaultCodesManagementTable() {
     });
 }
 
+
+// ================================================================
+// إعدادات معادلات التقارير - قابلة للتعديل من لوحة الإدارة
+// المعادلة تُفسَّر بأمان ولا تسمح بتنفيذ JavaScript أو كود خارجي.
+// ================================================================
+const DEFAULT_FORMULA_SETTINGS = {
+    daily: 'downtime / 52200 * 100',
+    shift1: 'shift1Downtime / shift1Operating * 100',
+    shift2: 'shift2Downtime / shift2Operating * 100',
+    monthly: 'downtime / operating * 100'
+};
+let FORMULA_SETTINGS = { ...DEFAULT_FORMULA_SETTINGS };
+let formulaSettingsSyncReady = false;
+
+function cloneDefaultFormulaSettings() { return { ...DEFAULT_FORMULA_SETTINGS }; }
+function getStoredFormulaSettings() {
+    try {
+        const saved = JSON.parse(localStorage.getItem('factory5_formula_settings_backup') || 'null');
+        if (saved && typeof saved === 'object') {
+            return {
+                daily: String(saved.daily || DEFAULT_FORMULA_SETTINGS.daily),
+                shift1: String(saved.shift1 || DEFAULT_FORMULA_SETTINGS.shift1),
+                shift2: String(saved.shift2 || DEFAULT_FORMULA_SETTINGS.shift2),
+                monthly: String(saved.monthly || DEFAULT_FORMULA_SETTINGS.monthly)
+            };
+        }
+    } catch (_) {}
+    return cloneDefaultFormulaSettings();
+}
+function saveFormulaSettingsLocal(settings) {
+    localStorage.setItem('factory5_formula_settings_backup', JSON.stringify(settings));
+}
+function populateFormulaSettingsForm() {
+    const map = { daily: 'formula-daily', shift1: 'formula-shift1', shift2: 'formula-shift2', monthly: 'formula-monthly' };
+    Object.keys(map).forEach(key => {
+        const el = document.getElementById(map[key]);
+        if (el) el.value = FORMULA_SETTINGS[key] || DEFAULT_FORMULA_SETTINGS[key];
+    });
+}
+function normalizeFormulaExpression(expression) {
+    return String(expression || '')
+        .replace(/[×xX]/g, '*')
+        .replace(/[÷]/g, '/')
+        .replace(/[٪%]/g, '')
+        .replace(/[−–—]/g, '-')
+        .replace(/,/g, '.')
+        .trim();
+}
+
+function evaluateSafeFormula(expression, variables) {
+    const input = normalizeFormulaExpression(expression);
+    if (!input) throw new Error('المعادلة فارغة');
+    const tokens = input.match(/[A-Za-z_][A-Za-z0-9_]*|(?:\d+(?:\.\d*)?|\.\d+)|[()+\-*/]/g);
+    if (!tokens || tokens.join('') !== input.replace(/\s+/g, '')) throw new Error('المعادلة تحتوي على رمز غير مسموح');
+    let pos = 0;
+    const getValue = name => {
+        if (Object.prototype.hasOwnProperty.call(variables, name)) return Number(variables[name]) || 0;
+        throw new Error(`المتغير ${name} غير معروف`);
+    };
+    function parseExpression() {
+        let value = parseTerm();
+        while (tokens[pos] === '+' || tokens[pos] === '-') {
+            const op = tokens[pos++];
+            const rhs = parseTerm();
+            value = op === '+' ? value + rhs : value - rhs;
+        }
+        return value;
+    }
+    function parseTerm() {
+        let value = parseFactor();
+        while (tokens[pos] === '*' || tokens[pos] === '/') {
+            const op = tokens[pos++];
+            const rhs = parseFactor();
+            if (op === '/') {
+                if (rhs === 0) throw new Error('لا يمكن القسمة على صفر');
+                value /= rhs;
+            } else value *= rhs;
+        }
+        return value;
+    }
+    function parseFactor() {
+        const token = tokens[pos];
+        if (token === '+') { pos++; return parseFactor(); }
+        if (token === '-') { pos++; return -parseFactor(); }
+        if (token === '(') {
+            pos++;
+            const value = parseExpression();
+            if (tokens[pos] !== ')') throw new Error('قوس غير مغلق');
+            pos++;
+            return value;
+        }
+        if (!token) throw new Error('المعادلة غير مكتملة');
+        pos++;
+        if (/^[A-Za-z_]/.test(token)) return getValue(token);
+        const number = Number(token);
+        if (!Number.isFinite(number)) throw new Error('رقم غير صالح');
+        return number;
+    }
+    const result = parseExpression();
+    if (pos !== tokens.length) throw new Error('المعادلة غير مكتملة أو بها ترتيب غير صحيح');
+    if (!Number.isFinite(result)) throw new Error('نتيجة المعادلة غير صالحة');
+    return result;
+}
+function calculateReportFormula(type, variables, fallback) {
+    try {
+        const expression = FORMULA_SETTINGS[type] || DEFAULT_FORMULA_SETTINGS[type];
+        const value = evaluateSafeFormula(expression, variables);
+        return Number.isFinite(value) ? value : fallback;
+    } catch (_) {
+        return fallback;
+    }
+}
+function setupFormulaSettingsSync() {
+    FORMULA_SETTINGS = getStoredFormulaSettings();
+    saveFormulaSettingsLocal(FORMULA_SETTINGS);
+    formulaSettingsSyncReady = true;
+    populateFormulaSettingsForm();
+    if (!rtdb) return;
+    rtdb.ref('factory5_formula_settings').on('value', snap => {
+        const value = snap.val();
+        if (value && typeof value === 'object') {
+            FORMULA_SETTINGS = {
+                daily: String(value.daily || DEFAULT_FORMULA_SETTINGS.daily),
+                shift1: String(value.shift1 || DEFAULT_FORMULA_SETTINGS.shift1),
+                shift2: String(value.shift2 || DEFAULT_FORMULA_SETTINGS.shift2),
+                monthly: String(value.monthly || DEFAULT_FORMULA_SETTINGS.monthly)
+            };
+            saveFormulaSettingsLocal(FORMULA_SETTINGS);
+            populateFormulaSettingsForm();
+            if (document.getElementById('tab-machines')?.classList.contains('active')) updateMachinesPerformanceTable();
+        }
+    });
+}
+function saveFormulaSettingsFromAdmin() {
+    const ids = { daily: 'formula-daily', shift1: 'formula-shift1', shift2: 'formula-shift2', monthly: 'formula-monthly' };
+    const next = {};
+    for (const key of Object.keys(ids)) {
+        const el = document.getElementById(ids[key]);
+        const expression = normalizeFormulaExpression(el ? el.value : '');
+        if (!expression) { alert(`اكتب معادلة ${key === 'daily' ? 'التعطل اليومية' : key === 'shift1' ? 'الوردية الأولى' : key === 'shift2' ? 'الوردية الثانية' : 'النسبة الشهرية'} أولاً.`); return; }
+        try { evaluateSafeFormula(expression, { downtime: 1, operating: 1, totalDowntime: 1, dailyOperating: 1, shift1Downtime: 1, shift2Downtime: 1, shift1Operating: 1, shift2Operating: 1 }); }
+        catch (err) { alert(`المعادلة غير صحيحة: ${err.message}`); return; }
+        next[key] = expression;
+    }
+    FORMULA_SETTINGS = next;
+    saveFormulaSettingsLocal(FORMULA_SETTINGS);
+    if (rtdb) rtdb.ref('factory5_formula_settings').set(FORMULA_SETTINGS);
+    const status = document.getElementById('formula-settings-status');
+    if (status) { status.textContent = '✅ تم حفظ المعادلات ومزامنتها. التقارير ستستخدمها فورًا.'; status.style.color = '#16a34a'; }
+    updateMachinesPerformanceTable();
+}
+function resetFormulaSettingsFromAdmin() {
+    FORMULA_SETTINGS = cloneDefaultFormulaSettings();
+    saveFormulaSettingsLocal(FORMULA_SETTINGS);
+    populateFormulaSettingsForm();
+    if (rtdb) rtdb.ref('factory5_formula_settings').set(FORMULA_SETTINGS);
+    const status = document.getElementById('formula-settings-status');
+    if (status) { status.textContent = '↩️ تم استرجاع المعادلات الأصلية وحفظها.'; status.style.color = '#2563eb'; }
+    updateMachinesPerformanceTable();
+}
+
 let selectedMachine = null;
 let html5QrCode = null;
 let paretoChartInstance = null;
@@ -364,7 +570,127 @@ let firebaseFaultsSyncReady = false;
 let serverTimeOffsetMs = 0;
 let serverTimeSyncReady = false;
 
+// ================================================================
+// تنبيهات صوتية فورية بين الشاشات
+// - جرس مختلف عند تسجيل عطل جديد لشاشة الصيانة.
+// - جرس مختلف عند استلام قائد الفريق للماكينة لشاشة الصيانة.
+// الأصوات مولدة محلياً عبر Web Audio ولا تحتاج أي ملفات أو خدمة خارجية.
+// ================================================================
+let alertAudioContext = null;
+let alertAudioReady = false;
+let faultAlertStateById = new Map();
+let faultAlertBaselineReady = false;
+
+function ensureAlertAudioReady() {
+    try {
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        if (!AudioCtx) return false;
+        if (!alertAudioContext) alertAudioContext = new AudioCtx();
+        if (alertAudioContext.state === 'suspended') alertAudioContext.resume().catch(() => {});
+        alertAudioReady = alertAudioContext.state === 'running';
+        return true;
+    } catch (_) {
+        return false;
+    }
+}
+
+function playAlertToneSequence(notes, options = {}) {
+    if (!ensureAlertAudioReady() || !alertAudioContext) return;
+    const ctx = alertAudioContext;
+    const now = ctx.currentTime + 0.02;
+    const gap = Number(options.gap ?? 0.08);
+    const noteDuration = Number(options.duration ?? 0.18);
+    const volume = Number(options.volume ?? 0.065);
+
+    notes.forEach((frequency, index) => {
+        const start = now + index * (noteDuration + gap);
+        const oscillator = ctx.createOscillator();
+        const gain = ctx.createGain();
+        oscillator.type = options.type || 'sine';
+        oscillator.frequency.setValueAtTime(Number(frequency), start);
+        gain.gain.setValueAtTime(0.0001, start);
+        gain.gain.exponentialRampToValueAtTime(Math.max(0.001, volume), start + 0.018);
+        gain.gain.exponentialRampToValueAtTime(0.0001, start + noteDuration);
+        oscillator.connect(gain);
+        gain.connect(ctx.destination);
+        oscillator.start(start);
+        oscillator.stop(start + noteDuration + 0.02);
+    });
+}
+
+function playNewFaultAlert() {
+    // جرس عطل جديد: تنبيه طويل وواضح (عدة تكرارات) حتى يلفت انتباه الفنيين.
+    // النغمة مختلفة عن جرس استلام قائد الفريق.
+    const notes = [
+        880, 1174.66, 1396.91, 1174.66,
+        880, 1174.66, 1396.91, 1174.66,
+        880, 1174.66, 1396.91, 1567.98,
+        1396.91, 1174.66, 880
+    ];
+    playAlertToneSequence(notes, { duration: 0.22, gap: 0.10, volume: 0.10, type: 'square' });
+}
+
+function playLeaderReceiptAlert() {
+    // جرس استلام قائد الفريق: تنبيه طويل بنمط مختلف تماماً عن جرس العطل الجديد.
+    const notes = [
+        523.25, 659.25, 783.99, 659.25,
+        523.25, 659.25, 783.99, 880,
+        783.99, 659.25, 523.25,
+        783.99, 659.25, 523.25
+    ];
+    playAlertToneSequence(notes, { duration: 0.27, gap: 0.13, volume: 0.095, type: 'triangle' });
+}
+
+function monitorFaultAlerts(nextFaults) {
+    const list = Array.isArray(nextFaults) ? nextFaults : [];
+    const nextState = new Map();
+    list.forEach(f => {
+        if (f && f.id != null) nextState.set(String(f.id), f.status || '');
+    });
+
+    // أول تحميل = تأسيس الحالة فقط، بدون تشغيل جرس للأعطال القديمة.
+    if (!faultAlertBaselineReady) {
+        faultAlertStateById = nextState;
+        faultAlertBaselineReady = true;
+        return;
+    }
+
+    // الجرس لا يعمل إلا عندما تكون شاشة إدارة الصيانة هي الواجهة الحالية.
+    const maintenanceScreenOpen = document.body.classList.contains('factory5-role-tech');
+    if (!maintenanceScreenOpen) {
+        faultAlertStateById = nextState;
+        return;
+    }
+
+    let newFaultDetected = false;
+    let leaderReceiptDetected = false;
+
+    nextState.forEach((status, id) => {
+        const previousStatus = faultAlertStateById.get(id);
+        if (status === 'active' && previousStatus !== 'active' && previousStatus !== 'awaiting_leader_receipt') {
+            newFaultDetected = true;
+        }
+        if (status === 'finished' && previousStatus === 'awaiting_leader_receipt') {
+            leaderReceiptDetected = true;
+        }
+    });
+
+    faultAlertStateById = nextState;
+
+    if (newFaultDetected) playNewFaultAlert();
+    if (leaderReceiptDetected) playLeaderReceiptAlert();
+}
+
 document.addEventListener("DOMContentLoaded", () => {
+    // عند فتح الرابط دائماً تظهر شاشة الدخول الرئيسية أولاً.
+    // تسجيل الأعطال متاح من شاشة الدخول بدون كلمة مرور، بينما باقي الواجهات محمية.
+    const initialTech = document.getElementById("tech-dashboard-section");
+    const initialLeader = document.getElementById("team-leader-dashboard-section");
+    const initialAdmin = document.getElementById("admin-panel");
+    if (initialTech) initialTech.classList.add("hidden");
+    if (initialLeader) initialLeader.classList.add("hidden");
+    if (initialAdmin) initialAdmin.classList.add("hidden");
+    document.body.classList.remove("factory5-role-worker", "factory5-role-tech", "factory5-role-leader", "factory5-role-admin");
     setupMachinePerformanceFilter();
     initClock();
     populateFaultCodes();
@@ -374,6 +700,7 @@ document.addEventListener("DOMContentLoaded", () => {
     setupMachineSync();
     setupFaultCodesSync();
     setupTechScreensSync();
+    setupFormulaSettingsSync();
     setupEventListeners();
     restoreAdminStateOnLoad();
 });
@@ -406,12 +733,17 @@ function setupLiveFaultRefresh() {
 function applyFirebaseFaultSnapshot(data) {
     firebaseFaultsSyncReady = true;
     cachedFaults = data && typeof data === 'object' ? Object.values(data) : [];
+
+    // فحص التغييرات قبل إعادة الرسم حتى يصل التنبيه الصوتي فوراً للشاشة الصحيحة.
+    monitorFaultAlerts(cachedFaults);
+
     // Firebase هو المصدر الموحد بين كل الأجهزة؛ النسخة المحلية مجرد احتياطية.
     localStorage.setItem("factory5_faults_backup", JSON.stringify(cachedFaults));
 
     // تحديث واجهة العامل وشاشات الفنيين فورًا من نفس البيانات القادمة من Firebase.
     loadFaultsFromStorage();
     renderTechDashboard();
+    renderTeamLeaderDashboard();
     updateLiveFaultDurations();
 
     const activeTab = sessionStorage.getItem("factory5_active_tab") || "tab-indicators";
@@ -684,12 +1016,15 @@ function initClock() {
 }
 
 function updateLiveFaultDurations(nowMs = getSynchronizedNow()) {
-    const active = document.querySelectorAll(".fault-card[data-fault-id]");
-    active.forEach(card => {
+    const cards = document.querySelectorAll(".fault-card[data-fault-id]");
+    cards.forEach(card => {
         const faultId = card.getAttribute("data-fault-id");
-        const fault = getStoredFaults().find(f => String(f.id) === String(faultId) && f.status === "active");
+        const fault = getStoredFaults().find(f => {
+            if (String(f.id) !== String(faultId)) return false;
+            return f.status === "active" || f.status === "awaiting_leader_receipt";
+        });
         if (!fault) {
-            // العطل انتهى من جهاز آخر أو من نفس الجهاز: احذف البطاقة فورًا من الواجهة.
+            // لا نحذف بطاقة الانتظار بسبب تحديث العداد؛ الحذف يكون فقط بعد استلام قائد الفريق.
             card.remove();
             return;
         }
@@ -745,10 +1080,13 @@ function saveStoredFaults(faults) {
 function getFaultDurationSeconds(fault, nowMs = getSynchronizedNow()) {
     if (!fault) return 0;
 
-    // العطل المفتوح: من لحظة البداية وحتى اللحظة الحالية.
-    // العطل المنتهي: من لحظة البداية وحتى لحظة النهاية المسجلة.
+    // أثناء انتظار استلام قائد الفريق يظل عداد العطل شغالاً حتى لحظة الاستلام.
+    // endTime لا يتم تسجيله عند ضغط الفني على "تم الإصلاح"؛ بل عند استلام قائد الفريق فقط.
     if (Number.isFinite(Number(fault.startTime))) {
-        const end = Number.isFinite(Number(fault.endTime)) ? Number(fault.endTime) : nowMs;
+        const isWaitingForLeader = fault.status === "awaiting_leader_receipt";
+        const end = isWaitingForLeader
+            ? nowMs
+            : (Number.isFinite(Number(fault.endTime)) ? Number(fault.endTime) : nowMs);
         return Math.max(0, (end - Number(fault.startTime)) / 1000);
     }
 
@@ -802,28 +1140,138 @@ window.switchAdminTab = function(tabId) {
     if (tabId === "tab-indicators") updateIndicators();
     else if (tabId === "tab-machines") updateMachinesPerformanceTable();
     else if (tabId === "tab-machine-management") updateMachineManagementTable();
+    else if (tabId === "tab-formula-settings") populateFormulaSettingsForm();
     else if (tabId === "tab-pareto") updateParetoTable();
     else if (tabId === "tab-logs") updateFullLogsTable();
 }
 
+// إعدادات الدخول المستقلة لكل شاشة
+const PROTECTED_VIEW_CONFIG = {
+    tech: {
+        title: "تسجيل دخول إدارة الصيانة",
+        description: "أدخل كلمة المرور الخاصة بإدارة الصيانة وشاشات الفنيين:",
+        password: "130150",
+        sessionKey: "factory5_maintenance_authenticated"
+    },
+    leader: {
+        title: "تسجيل دخول قائد الفريق",
+        description: "أدخل كلمة المرور الخاصة بشاشة قائد الفريق:",
+        password: "588855",
+        sessionKey: "factory5_team_leader_authenticated"
+    },
+    admin: {
+        title: "تسجيل دخول الإدارة",
+        description: "أدخل كلمة المرور الخاصة بلوحة تحكم الإدارة:",
+        password: "205080",
+        sessionKey: "factory5_admin_authenticated"
+    }
+};
+
+let pendingProtectedView = null;
+
 function restoreAdminStateOnLoad() {
-    // sessionStorage خاص بنفس التبويب: يظل الدخول موجوداً عند Refresh فقط،
-    // أما تبويب/جلسة جديدة فتحتاج كلمة المرور من جديد.
+    // الأمان والتنظيم: كل فتح للرابط يبدأ من شاشة الدخول الرئيسية.
+    // لا نعيد فتح أي واجهة محمية تلقائياً حتى لو كانت جلسة سابقة موجودة.
+    sessionStorage.removeItem("factory5_admin_authenticated");
+    sessionStorage.removeItem(PROTECTED_VIEW_CONFIG.tech.sessionKey);
+    sessionStorage.removeItem(PROTECTED_VIEW_CONFIG.leader.sessionKey);
+
     const adminPanel = document.getElementById("admin-panel");
     const loginModal = document.getElementById("login-modal");
-    const isAuthenticated = sessionStorage.getItem("factory5_admin_authenticated") === "true";
-
+    const initialLogin = document.getElementById("initial-login-page");
+    if (adminPanel) adminPanel.classList.add("hidden");
     if (loginModal) loginModal.classList.add("hidden");
-    if (isAuthenticated && adminPanel) {
-        adminPanel.classList.remove("hidden");
-        const activeTab = sessionStorage.getItem("factory5_active_tab") || "tab-indicators";
-        switchAdminTab(activeTab);
-    } else if (adminPanel) {
-        adminPanel.classList.add("hidden");
-    }
+    if (initialLogin) initialLogin.classList.remove("hidden");
+}
+
+
+function showFactory5Role(role) {
+    document.body.classList.remove("factory5-role-worker", "factory5-role-tech", "factory5-role-leader", "factory5-role-admin");
+    document.body.classList.add(`factory5-role-${role}`);
+    const adminPanel = document.getElementById("admin-panel");
+    if (adminPanel && role !== "admin") adminPanel.classList.add("hidden");
 }
 
 function setupEventListeners() {
+    // أول تفاعل للمستخدم يفتح الصوت في المتصفح، حتى يمكن تشغيل الجرس لاحقاً
+    // عند وصول عطل جديد أو استلام قائد الفريق بدون الحاجة لأي Refresh.
+    document.addEventListener('pointerdown', () => ensureAlertAudioReady(), { passive: true });
+    document.addEventListener('keydown', () => ensureAlertAudioReady());
+
+    // ===== شاشة الدخول الرئيسية =====
+    const initialLoginPage = document.getElementById("initial-login-page");
+    const initialRoleButtons = document.querySelectorAll(".initial-role-btn");
+    const initialPasswordWrap = document.getElementById("initial-password-wrap");
+    const initialPasswordInput = document.getElementById("initial-password-input");
+    const initialLoginSubmit = document.getElementById("initial-login-submit");
+    const initialLoginError = document.getElementById("initial-login-error");
+    const initialLoginHint = document.getElementById("initial-login-hint");
+    let initialSelectedRole = "worker";
+
+    function updateInitialLoginRole(role) {
+        initialSelectedRole = role;
+        initialRoleButtons.forEach(btn => btn.classList.toggle("active", btn.dataset.role === role));
+        const protectedRole = role !== "worker";
+        if (initialPasswordWrap) initialPasswordWrap.classList.toggle("hidden", !protectedRole);
+        if (initialPasswordInput) initialPasswordInput.value = "";
+        if (initialLoginError) initialLoginError.classList.add("hidden");
+
+        const cfg = PROTECTED_VIEW_CONFIG[role];
+        if (initialLoginSubmit) initialLoginSubmit.textContent = role === "worker" ? "دخول تسجيل الأعطال" : "دخول النظام";
+        if (initialLoginHint) {
+            initialLoginHint.textContent = role === "worker"
+                ? "تسجيل الأعطال متاح للعامل مباشرة بدون كلمة مرور."
+                : (cfg ? cfg.description.replace(/[:：]$/, "") : "");
+        }
+        if (protectedRole && initialPasswordInput) initialPasswordInput.focus();
+    }
+
+    function enterSelectedRole() {
+        if (initialSelectedRole === "worker") {
+            sessionStorage.removeItem("factory5_admin_authenticated");
+            sessionStorage.removeItem(PROTECTED_VIEW_CONFIG.tech.sessionKey);
+            sessionStorage.removeItem(PROTECTED_VIEW_CONFIG.leader.sessionKey);
+            if (initialLoginPage) initialLoginPage.classList.add("hidden");
+            setActiveView("worker");
+            return;
+        }
+
+        const cfg = PROTECTED_VIEW_CONFIG[initialSelectedRole];
+        const pass = initialPasswordInput ? initialPasswordInput.value : "";
+        if (!cfg || pass !== cfg.password) {
+            if (initialLoginError) {
+                initialLoginError.textContent = "كلمة المرور غير صحيحة!";
+                initialLoginError.classList.remove("hidden");
+            }
+            if (initialPasswordInput) { initialPasswordInput.select(); initialPasswordInput.focus(); }
+            return;
+        }
+
+        sessionStorage.setItem(cfg.sessionKey, "true");
+        if (initialSelectedRole === "admin") {
+            sessionStorage.setItem("factory5_admin_authenticated", "true");
+            if (initialLoginPage) initialLoginPage.classList.add("hidden");
+            showFactory5Role("admin");
+            const adminPanel = document.getElementById("admin-panel");
+            if (adminPanel) adminPanel.classList.remove("hidden");
+            switchAdminTab(sessionStorage.getItem("factory5_active_tab") || "tab-indicators");
+        } else {
+            if (initialLoginPage) initialLoginPage.classList.add("hidden");
+            setActiveView(initialSelectedRole);
+        }
+        if (initialPasswordInput) initialPasswordInput.value = "";
+        if (initialLoginError) initialLoginError.classList.add("hidden");
+    }
+
+    initialRoleButtons.forEach(btn => {
+        btn.addEventListener("click", () => updateInitialLoginRole(btn.dataset.role));
+    });
+    if (initialLoginSubmit) initialLoginSubmit.addEventListener("click", enterSelectedRole);
+    if (initialPasswordInput) initialPasswordInput.addEventListener("keypress", e => {
+        if (e.key === "Enter") enterSelectedRole();
+    });
+    updateInitialLoginRole("worker");
+
     // 1. بحث الماكينات
     const searchBtn = document.getElementById("search-machine-btn");
     if (searchBtn) {
@@ -851,74 +1299,163 @@ function setupEventListeners() {
     const startFaultBtn = document.getElementById("start-fault-btn");
     if (startFaultBtn) startFaultBtn.addEventListener("click", startFaultRecord);
 
-    // 4. أزرار تبديل الواجهات (عمال / فنيين) - التصحيح الجذري للعمل الفوري
+    // 4. أزرار تبديل الواجهات (عمال / فنيين / قائد الفريق)
+    // واجهة تسجيل الأعطال للعمال تظل مفتوحة بدون كلمة مرور.
+    // إدارة الصيانة وشاشة قائد الفريق محميتان بكلمة مرور مستقلة لكل واجهة.
     const switchWorkerView = document.getElementById("switch-worker-view");
     const switchTechView = document.getElementById("switch-tech-view");
+    const switchLeaderView = document.getElementById("switch-leader-view");
     const faultRegSection = document.getElementById("fault-registration-section");
     const techDashboardSection = document.getElementById("tech-dashboard-section");
+    const teamLeaderDashboardSection = document.getElementById("team-leader-dashboard-section");
     const workerActiveFaultsSection = document.getElementById("worker-active-faults-section");
 
+    function setActiveView(view) {
+        const isWorker = view === "worker";
+        const isTech = view === "tech";
+        const isLeader = view === "leader";
+
+        showFactory5Role(view);
+        const adminPanel = document.getElementById("admin-panel");
+        if (adminPanel) adminPanel.classList.add("hidden");
+
+        if (switchWorkerView) {
+            switchWorkerView.classList.toggle("active-mode-btn", isWorker);
+            switchWorkerView.classList.toggle("btn-primary", isWorker);
+            switchWorkerView.classList.toggle("btn-outline", !isWorker);
+        }
+        if (switchTechView) {
+            switchTechView.classList.toggle("active-mode-btn", isTech);
+            switchTechView.classList.toggle("btn-primary", isTech);
+            switchTechView.classList.toggle("btn-outline", !isTech);
+        }
+        if (switchLeaderView) {
+            switchLeaderView.classList.toggle("active-mode-btn", isLeader);
+            switchLeaderView.classList.toggle("btn-primary", isLeader);
+            switchLeaderView.classList.toggle("btn-outline", !isLeader);
+        }
+
+        if (faultRegSection) faultRegSection.classList.toggle("hidden", !isWorker);
+        if (workerActiveFaultsSection) workerActiveFaultsSection.classList.toggle("hidden", !isWorker);
+        if (techDashboardSection) techDashboardSection.classList.toggle("hidden", !isTech);
+        if (teamLeaderDashboardSection) teamLeaderDashboardSection.classList.toggle("hidden", !isLeader);
+
+        if (isTech) {
+            loadFaultsFromStorage();
+            renderTechDashboard();
+        } else if (isLeader) {
+            renderTeamLeaderDashboard();
+        }
+    }
+
+    function returnToInitialLogin() {
+        document.body.classList.remove("factory5-role-worker", "factory5-role-tech", "factory5-role-leader", "factory5-role-admin");
+        const adminPanel = document.getElementById("admin-panel");
+        if (adminPanel) adminPanel.classList.add("hidden");
+        const initialLogin = document.getElementById("initial-login-page");
+        if (initialLogin) initialLogin.classList.remove("hidden");
+        updateInitialLoginRole("worker");
+    }
+
+    // كل شاشة محمية لها جلسة دخول مستقلة داخل نفس التبويب.
+    function openProtectedLogin(view) {
+        const cfg = PROTECTED_VIEW_CONFIG[view];
+        if (!cfg) return;
+        if (sessionStorage.getItem(cfg.sessionKey) === "true") {
+            setActiveView(view);
+            return;
+        }
+        pendingProtectedView = view;
+        const loginPage = document.getElementById("screen-login-page");
+        const title = document.getElementById("screen-login-title");
+        const description = document.getElementById("screen-login-description");
+        const passInput = document.getElementById("screen-password-input");
+        const errorMsg = document.getElementById("screen-login-error");
+        if (title) title.textContent = cfg.title;
+        if (description) description.textContent = cfg.description;
+        if (passInput) {
+            passInput.value = "";
+            passInput.focus();
+        }
+        if (errorMsg) errorMsg.classList.add("hidden");
+        if (loginPage) loginPage.classList.remove("hidden");
+    }
+
     if (switchWorkerView) {
-        switchWorkerView.addEventListener("click", () => {
-            switchWorkerView.classList.add("active-mode-btn", "btn-primary");
-            switchWorkerView.classList.remove("btn-outline");
-            if (switchTechView) {
-                switchTechView.classList.remove("active-mode-btn", "btn-primary");
-                switchTechView.classList.add("btn-outline");
-            }
-            if (faultRegSection) faultRegSection.classList.remove("hidden");
-            if (workerActiveFaultsSection) workerActiveFaultsSection.classList.remove("hidden");
-            if (techDashboardSection) techDashboardSection.classList.add("hidden");
-        });
+        switchWorkerView.addEventListener("click", () => setActiveView("worker"));
     }
 
     if (switchTechView) {
-        switchTechView.addEventListener("click", () => {
-            switchTechView.classList.add("active-mode-btn", "btn-primary");
-            switchTechView.classList.remove("btn-outline");
-            if (switchWorkerView) {
-                switchWorkerView.classList.remove("active-mode-btn", "btn-primary");
-                switchWorkerView.classList.add("btn-outline");
-            }
-            if (faultRegSection) faultRegSection.classList.add("hidden");
-            if (workerActiveFaultsSection) workerActiveFaultsSection.classList.add("hidden");
-            if (techDashboardSection) techDashboardSection.classList.remove("hidden");
-            loadFaultsFromStorage();
-        });
+        switchTechView.addEventListener("click", () => openProtectedLogin("tech"));
     }
 
-    // 5. زر فتح نافذة تسجيل دخول الإدارة
+    if (switchLeaderView) {
+        switchLeaderView.addEventListener("click", () => openProtectedLogin("leader"));
+    }
+
+    // 5. تسجيل الدخول الموحد للواجهات المحمية
     const adminLoginBtn = document.getElementById("admin-login-btn");
     if (adminLoginBtn) {
-        adminLoginBtn.addEventListener("click", () => {
-            const loginModal = document.getElementById("login-modal");
-            if (loginModal) loginModal.classList.remove("hidden");
-            const passInput = document.getElementById("admin-password-input");
-            if (passInput) {
-                passInput.value = "";
-                passInput.focus();
-            }
-            const errorMsg = document.getElementById("login-error-msg");
-            if (errorMsg) errorMsg.classList.add("hidden");
-        });
+        adminLoginBtn.addEventListener("click", () => openProtectedLogin("admin"));
     }
 
     const closeLoginBtn = document.getElementById("close-login-btn");
     if (closeLoginBtn) {
         closeLoginBtn.addEventListener("click", () => {
-            document.getElementById("login-modal").classList.add("hidden");
+            const modal = document.getElementById("login-modal");
+            if (modal) modal.classList.add("hidden");
+            pendingProtectedView = null;
         });
     }
 
     const submitLoginBtn = document.getElementById("submit-login-btn");
-    if (submitLoginBtn) {
-        submitLoginBtn.addEventListener("click", verifyAdminPassword);
-    }
+    if (submitLoginBtn) submitLoginBtn.addEventListener("click", verifyProtectedPassword);
 
     const adminPasswordInput = document.getElementById("admin-password-input");
     if (adminPasswordInput) {
         adminPasswordInput.addEventListener("keypress", (e) => {
-            if (e.key === "Enter") verifyAdminPassword();
+            if (e.key === "Enter") verifyProtectedPassword();
+        });
+    }
+
+    // شاشة الدخول الجديدة: دخول مستقل لكل واجهة بدون قائمة اختيار حساب.
+    const screenLoginSubmit = document.getElementById("screen-login-submit");
+    if (screenLoginSubmit) screenLoginSubmit.addEventListener("click", verifyScreenPassword);
+
+    const screenLoginCancel = document.getElementById("screen-login-cancel");
+    if (screenLoginCancel) {
+        screenLoginCancel.addEventListener("click", () => {
+            const page = document.getElementById("screen-login-page");
+            if (page) page.classList.add("hidden");
+            const input = document.getElementById("screen-password-input");
+            const error = document.getElementById("screen-login-error");
+            if (input) input.value = "";
+            if (error) error.classList.add("hidden");
+            pendingProtectedView = null;
+        });
+    }
+
+    const screenPasswordInput = document.getElementById("screen-password-input");
+    if (screenPasswordInput) {
+        screenPasswordInput.addEventListener("keypress", (e) => {
+            if (e.key === "Enter") verifyScreenPassword();
+        });
+    }
+
+    // تسجيل الخروج من إدارة الصيانة أو شاشة قائد الفريق.
+    const logoutMaintenanceBtn = document.getElementById("logout-maintenance-btn");
+    if (logoutMaintenanceBtn) {
+        logoutMaintenanceBtn.addEventListener("click", () => {
+            sessionStorage.removeItem(PROTECTED_VIEW_CONFIG.tech.sessionKey);
+            returnToInitialLogin();
+        });
+    }
+
+    const logoutTeamLeaderBtn = document.getElementById("logout-team-leader-btn");
+    if (logoutTeamLeaderBtn) {
+        logoutTeamLeaderBtn.addEventListener("click", () => {
+            sessionStorage.removeItem(PROTECTED_VIEW_CONFIG.leader.sessionKey);
+            returnToInitialLogin();
         });
     }
 
@@ -930,6 +1467,7 @@ function setupEventListeners() {
             if (adminPanel) adminPanel.classList.add("hidden");
             sessionStorage.removeItem("factory5_admin_authenticated");
             sessionStorage.removeItem("factory5_active_tab");
+            returnToInitialLogin();
         });
     }
 
@@ -953,6 +1491,11 @@ function setupEventListeners() {
 
     const printChartOnlyBtn = document.getElementById("print-chart-only-btn");
     if (printChartOnlyBtn) printChartOnlyBtn.addEventListener("click", printParetoChartOnly);
+
+    const saveFormulaSettingsBtn = document.getElementById("save-formula-settings-btn");
+    if (saveFormulaSettingsBtn) saveFormulaSettingsBtn.addEventListener("click", saveFormulaSettingsFromAdmin);
+    const resetFormulaSettingsBtn = document.getElementById("reset-formula-settings-btn");
+    if (resetFormulaSettingsBtn) resetFormulaSettingsBtn.addEventListener("click", resetFormulaSettingsFromAdmin);
 
     const saveMachineBtn = document.getElementById("save-machine-btn");
     if (saveMachineBtn) saveMachineBtn.addEventListener("click", saveMachineFromAdmin);
@@ -1464,6 +2007,7 @@ function loadFaultsFromStorage() {
 
     // شاشة الفنيين أصبحت ديناميكية حسب إعدادات الإدارة.
     if (techCatElectricity) renderTechDashboard();
+    renderTeamLeaderDashboard();
 
 }
 
@@ -1480,17 +2024,17 @@ window.endFault = function(faultId) {
         return;
     }
     finishingFaultIds.add(key);
-    fault.endTime = getSynchronizedNow();
-    // نحفظ المدة بالثواني بدون تقريب، ونحتفظ بالحقل القديم للتوافق فقط.
-    fault.durationSeconds = Math.max(0, (fault.endTime - fault.startTime) / 1000);
-    fault.durationMinutes = fault.durationSeconds / 60;
-    fault.status = "finished";
-    // نحدّث الواجهة أولًا، لذلك تختفي البطاقة فور الضغط حتى قبل اكتمال الحفظ السحابي.
-    loadFaultsFromStorage();
+    // الفني يؤكد الإصلاح فقط، ولا نوقف عداد التوقف هنا.
+    // يظل العطل في حالة انتظار قائد الفريق، والعداد يستمر من startTime حتى الاستلام الفعلي.
+    fault.technicianEndTime = getSynchronizedNow();
+    fault.status = "awaiting_leader_receipt";
+    // لا نضع endTime ولا durationSeconds النهائية هنا؛ يتم تثبيتهما عند استلام قائد الفريق.
+    // نحفظ أولاً ثم نعيد الرسم، حتى لا يظهر العطل للحظة ثم يختفي بسبب مزامنة قديمة.
     saveStoredFaults(faults);
-    // إعادة الرسم بعد الحفظ لضمان مزامنة شاشة العامل وشاشات الفنيين.
     loadFaultsFromStorage();
-    alert(`تم تسجيل انتهاء العطل. المدة: ${formatDuration(fault.durationSeconds, "seconds")}`);
+    renderTechDashboard();
+    renderTeamLeaderDashboard();
+    alert(`تم تسجيل انتهاء الفني. عداد التوقف مستمر حتى استلام قائد الفريق للماكينة.`);
     finishingFaultIds.delete(key);
 };
 
@@ -1502,18 +2046,68 @@ window.deleteFault = function(faultId) {
     alert("تم حذف العطل بنجاح.");
 };
 
-function verifyAdminPassword() {
-    const pass = document.getElementById("admin-password-input").value;
-    const errorMsg = document.getElementById("login-error-msg");
-    if (pass === "205080") {
-        document.getElementById("login-modal").classList.add("hidden");
-        document.getElementById("admin-panel").classList.remove("hidden");
-        // حفظ الدخول داخل نفس التبويب فقط حتى يظل مفتوحاً عند Refresh.
-        sessionStorage.setItem("factory5_admin_authenticated", "true");
-        switchAdminTab(sessionStorage.getItem("factory5_active_tab") || "tab-indicators");
+function verifyScreenPassword() {
+    const view = pendingProtectedView;
+    const cfg = PROTECTED_VIEW_CONFIG[view];
+    const passInput = document.getElementById("screen-password-input");
+    const errorMsg = document.getElementById("screen-login-error");
+    const pass = passInput ? passInput.value : "";
+    if (!cfg) return;
+
+    if (pass === cfg.password) {
+        sessionStorage.setItem(cfg.sessionKey, "true");
+        const page = document.getElementById("screen-login-page");
+        if (page) page.classList.add("hidden");
+        if (view === "admin") {
+            const adminPanel = document.getElementById("admin-panel");
+            if (adminPanel) adminPanel.classList.remove("hidden");
+            sessionStorage.setItem("factory5_admin_authenticated", "true");
+            showFactory5Role("admin");
+            switchAdminTab(sessionStorage.getItem("factory5_active_tab") || "tab-indicators");
+        } else {
+            setActiveView(view);
+        }
+        if (passInput) passInput.value = "";
+        if (errorMsg) errorMsg.classList.add("hidden");
+        pendingProtectedView = null;
     } else {
-        errorMsg.classList.remove("hidden");
+        if (errorMsg) errorMsg.classList.remove("hidden");
+        if (passInput) { passInput.select(); passInput.focus(); }
     }
+}
+
+function verifyProtectedPassword() {
+    const view = pendingProtectedView;
+    const cfg = PROTECTED_VIEW_CONFIG[view];
+    const passInput = document.getElementById("admin-password-input");
+    const errorMsg = document.getElementById("login-error-msg");
+    const pass = passInput ? passInput.value : "";
+    if (!cfg) return;
+
+    if (pass === cfg.password) {
+        sessionStorage.setItem(cfg.sessionKey, "true");
+        const modal = document.getElementById("login-modal");
+        if (modal) modal.classList.add("hidden");
+        if (view === "admin") {
+            const adminPanel = document.getElementById("admin-panel");
+            if (adminPanel) adminPanel.classList.remove("hidden");
+            sessionStorage.setItem("factory5_admin_authenticated", "true");
+            showFactory5Role("admin");
+            switchAdminTab(sessionStorage.getItem("factory5_active_tab") || "tab-indicators");
+        } else {
+            setActiveView(view);
+        }
+        pendingProtectedView = null;
+    } else {
+        if (errorMsg) errorMsg.classList.remove("hidden");
+        if (passInput) { passInput.select(); passInput.focus(); }
+    }
+}
+
+// توافق مع أي استدعاء قديم داخل المشروع.
+function verifyAdminPassword() {
+    pendingProtectedView = "admin";
+    verifyProtectedPassword();
 }
 
 function updateIndicators() {
@@ -1667,24 +2261,62 @@ function getMachineDailyDowntimeSeconds(machineFaults, nowMs = getSynchronizedNo
     }, 0);
 }
 
+// حساب موحد لكل مؤشرات اليوم؛ نفس البيانات/الثواني تُستخدم أعلى التقرير وأسفله.
+// بهذه الطريقة لا يمكن أن تختلف "نسبة التعطل اليومية" بين الجدول الرئيسي وتفاصيل الأيام.
+function calculateMachineDayReportMetrics(dayDate, machineFaults, nowMs = getSynchronizedNow()) {
+    const dayStart = new Date(dayDate.getFullYear(), dayDate.getMonth(), dayDate.getDate()).getTime();
+    const dayEnd = new Date(dayDate.getFullYear(), dayDate.getMonth(), dayDate.getDate() + 1).getTime();
+    const effectiveEnd = Math.min(dayEnd, nowMs);
+    if (effectiveEnd <= dayStart) {
+        return { shift1Total: 0, shift2Total: 0, total: 0, shift1Operating: 27000, shift2Operating: 25200, dailyRatio: 0, shift1Ratio: 0, shift2Ratio: 0 };
+    }
+
+    const dayFaults = machineFaults.filter(f => Number.isFinite(Number(f.startTime)) && faultIntersectsDateRange(f, dayStart, dayEnd - 1));
+    const shift1Intervals = getMachineShiftIntervalsForDay(dayDate, 1);
+    const shift2Intervals = getMachineShiftIntervalsForDay(dayDate, 2);
+    // نأخذ الثواني المكتملة لكل عطل قبل الجمع، تمامًا مثل إجمالي التقرير الرئيسي.
+    // لو جمعنا الكسور المخفية بالمللي ثانية أولًا ثم عملنا floor في النهاية،
+    // ممكن يظهر فرق 1-2 ثانية بين أعلى التقرير وتفاصيل اليوم.
+    const shift1Total = shift1Intervals.reduce((sum, [a, b]) => sum + dayFaults.reduce((inner, fault) => inner + Math.floor(Math.max(0, getFaultOperatingSeconds(fault, a, b, nowMs))), 0), 0);
+    const shift2Total = shift2Intervals.reduce((sum, [a, b]) => sum + dayFaults.reduce((inner, fault) => inner + Math.floor(Math.max(0, getFaultOperatingSeconds(fault, a, b, nowMs))), 0), 0);
+    const total = shift1Total + shift2Total;
+
+    // المقامات الخاصة بالورديات ثابتة حسب ساعات تشغيل المصنع:
+    // الوردية الأولى = 27,000 ثانية، الوردية الثانية = 25,200 ثانية.
+    const shift1Operating = shift1Intervals.reduce((sum, [a, b]) => sum + (b - a) / 1000, 0);
+    const shift2Operating = shift2Intervals.reduce((sum, [a, b]) => sum + (b - a) / 1000, 0);
+
+    const formulaVariables = {
+        downtime: total,
+        operating: FACTORY_DAILY_OPERATING_SECONDS,
+        totalDowntime: total,
+        dailyOperating: FACTORY_DAILY_OPERATING_SECONDS,
+        shift1Downtime: shift1Total,
+        shift2Downtime: shift2Total,
+        shift1Operating,
+        shift2Operating
+    };
+    const shift1Ratio = calculateReportFormula('shift1', { ...formulaVariables, downtime: shift1Total, operating: shift1Operating }, shift1Operating > 0 ? (shift1Total / shift1Operating) * 100 : 0);
+    const shift2Ratio = calculateReportFormula('shift2', { ...formulaVariables, downtime: shift2Total, operating: shift2Operating }, shift2Operating > 0 ? (shift2Total / shift2Operating) * 100 : 0);
+    const dailyRatio = calculateReportFormula('daily', formulaVariables, FACTORY_DAILY_OPERATING_SECONDS > 0 ? (total / FACTORY_DAILY_OPERATING_SECONDS) * 100 : 0);
+
+    return { dayFaults, shift1Total, shift2Total, total, shift1Operating, shift2Operating, dailyRatio, shift1Ratio, shift2Ratio };
+}
+
 function calculateDailyStopRatio(machineFaults, nowMs = getSynchronizedNow()) {
-    // النسبة اليومية المطلوبة: إجمالي توقف الماكينة خلال اليوم الحالي
-    // ÷ 52,200 ثانية (إجمالي تشغيل الماكينة في اليوم) × 100.
-    const downtimeSeconds = getMachineDailyDowntimeSeconds(machineFaults, nowMs);
-    return (downtimeSeconds / FACTORY_DAILY_OPERATING_SECONDS) * 100;
+    const now = new Date(nowMs);
+    const metrics = calculateMachineDayReportMetrics(new Date(now.getFullYear(), now.getMonth(), now.getDate()), machineFaults, nowMs);
+    return metrics.dailyRatio;
 }
 
 // حساب النسبة اليومية لأي يوم تاريخي، وليس اليوم الحالي فقط.
-// هذا يسمح بالرجوع إلى نسبة التعطل لليوم السابق بعد بدء يوم جديد.
+// هذا يسمح بالرجوع إلى نسبة التعطل لليوم السابق بعد بدء يوم جديد،
+// ويستخدم نفس الدالة الموحدة التي تستخدمها تفاصيل الأيام.
 function calculateDailyStopRatioForDate(machineFaults, targetDateString, nowMs = getSynchronizedNow()) {
     if (!targetDateString) return calculateDailyStopRatio(machineFaults, nowMs);
     const dayStart = new Date(`${targetDateString}T00:00:00`).getTime();
     if (!Number.isFinite(dayStart)) return 0;
-    const dayEnd = new Date(`${targetDateString}T23:59:59.999`).getTime();
-    const effectiveEnd = Math.min(dayEnd, nowMs);
-    if (effectiveEnd < dayStart) return 0;
-    const downtimeSeconds = machineFaults.reduce((sum, fault) => sum + getFaultOperatingSeconds(fault, dayStart, effectiveEnd, nowMs), 0);
-    return (downtimeSeconds / FACTORY_DAILY_OPERATING_SECONDS) * 100;
+    return calculateMachineDayReportMetrics(new Date(dayStart), machineFaults, nowMs).dailyRatio;
 }
 
 function calculateMonthlyStopRatio(machineFaults, nowMs = getSynchronizedNow()) {
@@ -1694,7 +2326,11 @@ function calculateMonthlyStopRatio(machineFaults, nowMs = getSynchronizedNow()) 
     if (operatingSeconds <= 0) return 0;
 
     const downtimeSeconds = getMachineMonthlyDowntimeSeconds(machineFaults, nowMs);
-    return (downtimeSeconds / operatingSeconds) * 100;
+    return calculateReportFormula('monthly', {
+        downtime: downtimeSeconds, operating: operatingSeconds, totalDowntime: downtimeSeconds,
+        dailyOperating: FACTORY_DAILY_OPERATING_SECONDS, shift1Downtime: 0, shift2Downtime: 0,
+        shift1Operating: 27000, shift2Operating: 25200
+    }, (downtimeSeconds / operatingSeconds) * 100);
 }
 
 function getMachinePerformanceFilters() {
@@ -1725,9 +2361,39 @@ function getFaultsForMachineAndRange(faults, machineNumber, dateFrom, dateTo, no
     return faults.filter(f => (!machineNumber || String(f.machineNumber) === String(machineNumber)) && (!(dateFrom || dateTo) || faultIntersectsDateRange(f, from, to)));
 }
 
+// مدة العطل المسجلة فعليًا في سجل الأعطال، بدون استبعاد ساعة الراحة أو ساعات الليل.
+// تستخدمها شاشة تقرير أداء الماكينات عند عرض "إجمالي وقت التوقف" حتى يطابق
+// مجموع مدد الأعطال المسجلة بالدقيقة والثانية حرفيًا.
+function getFaultRecordedDurationInRange(fault, rangeFrom, rangeTo, nowMs = getSynchronizedNow()) {
+    if (!fault) return 0;
+
+    const start = Number(fault.startTime);
+    if (Number.isFinite(start)) {
+        const endRaw = Number(fault.endTime);
+        const end = Number.isFinite(endRaw) ? endRaw : nowMs;
+        const overlapStart = Math.max(start, Number(rangeFrom));
+        const overlapEnd = Math.min(end, Number(rangeTo), nowMs);
+        return overlapEnd > overlapStart ? (overlapEnd - overlapStart) / 1000 : 0;
+    }
+
+    // دعم السجلات القديمة التي لا تحتوي على startTime.
+    const seconds = Number(fault.durationSeconds);
+    if (Number.isFinite(seconds) && seconds >= 0) return seconds;
+    const minutes = Number(fault.durationMinutes);
+    return Number.isFinite(minutes) && minutes >= 0 ? minutes * 60 : 0;
+}
+
 function getFaultDurationInRange(fault, rangeFrom, rangeTo, nowMs = getSynchronizedNow()) {
     if (!fault) return 0;
-    return Number.isFinite(Number(fault.startTime)) ? getFaultOperatingSeconds(fault, rangeFrom, rangeTo, nowMs) : 0;
+    // تقرير الأداء يطابق سجل الأعطال في خانة المدة: نأخذ الثواني المكتملة
+    // لكل عطل أولاً ثم نجمعها، حتى لا تتسبب أجزاء الثانية المخفية في فرق +1 ثانية.
+    return Math.floor(Math.max(0, getFaultRecordedDurationInRange(fault, rangeFrom, rangeTo, nowMs)));
+}
+
+function sumRecordedFaultDurations(faults, rangeFrom, rangeTo, nowMs = getSynchronizedNow()) {
+    return (Array.isArray(faults) ? faults : []).reduce((sum, fault) => {
+        return sum + getFaultDurationInRange(fault, rangeFrom, rangeTo, nowMs);
+    }, 0);
 }
 
 function populateMachinePerformanceFilter() {
@@ -1759,25 +2425,111 @@ function setupMachinePerformanceFilter() {
     if(resetBtn && resetBtn.dataset.bound!=='1'){ resetBtn.dataset.bound='1'; resetBtn.addEventListener('click',()=>{if(input)input.value='';select.value='';['machine-performance-date-from','machine-performance-date-to'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});apply();}); }
 }
 
+function getMachineShiftIntervalsForDay(dayDate, shiftNumber) {
+    const intervals = getOperatingIntervalsForDay(dayDate);
+    if (Number(shiftNumber) === 1) return intervals.slice(0, 2);
+    if (Number(shiftNumber) === 2) return intervals.slice(2, 3);
+    return intervals;
+}
+
+function getShiftOperatingSecondsForDate(dayDate, shiftNumber, nowMs = getSynchronizedNow()) {
+    const intervals = getMachineShiftIntervalsForDay(dayDate, shiftNumber);
+    const dayEnd = new Date(dayDate.getFullYear(), dayDate.getMonth(), dayDate.getDate() + 1).getTime();
+    const effectiveEnd = Math.min(nowMs, dayEnd);
+    if (effectiveEnd <= dayDate.getTime()) return 0;
+
+    return intervals.reduce((sum, [intervalStart, intervalEnd]) => {
+        const overlapStart = intervalStart;
+        const overlapEnd = Math.min(intervalEnd, effectiveEnd);
+        if (overlapEnd <= overlapStart) return sum;
+        return sum + (overlapEnd - overlapStart) / 1000;
+    }, 0);
+}
+
+function escapeMachineReportHtml(value) {
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+}
+
+function renderMachineFaultDetailsForDay(dayFaults, dayStart, dayEnd, nowMs) {
+    if (!dayFaults.length) return '<div class="machine-fault-details-empty">لا توجد أعطال في هذا اليوم.</div>';
+
+    const rows = dayFaults.map((fault, index) => {
+        const totalForDay = getFaultDurationInRange(fault, dayStart, dayEnd, nowMs);
+        const dayDate = new Date(dayStart);
+        const shift1 = getMachineShiftIntervalsForDay(dayDate, 1).reduce((sum, [a, b]) => sum + getFaultOperatingSeconds(fault, a, b, nowMs), 0);
+        const shift2 = getMachineShiftIntervalsForDay(dayDate, 2).reduce((sum, [a, b]) => sum + getFaultOperatingSeconds(fault, a, b, nowMs), 0);
+
+        const start = Number.isFinite(Number(fault.startTime)) ? new Date(Number(fault.startTime)) : null;
+        const endRaw = Number(fault.endTime);
+        const end = Number.isFinite(endRaw) ? new Date(endRaw) : null;
+        const startText = start ? start.toLocaleTimeString('ar-EG') : '-';
+        const endText = end ? end.toLocaleTimeString('ar-EG') : 'مفتوح';
+        const code = escapeMachineReportHtml(fault.faultCode || '-');
+        const name = escapeMachineReportHtml(fault.faultName || 'عطل غير محدد');
+        const notes = fault.notes ? `<div class="machine-fault-detail-note"><strong>ملاحظات:</strong> ${escapeMachineReportHtml(fault.notes)}</div>` : '';
+
+        return `<div class="machine-fault-detail-item">
+            <div class="machine-fault-detail-title">🛑 العطل ${index + 1}: كود ${code} — ${name}</div>
+            <div class="machine-fault-detail-grid">
+                <span><strong>وقت البداية:</strong> ${startText}</span>
+                <span><strong>وقت النهاية:</strong> ${endText}</span>
+                <span><strong>مدة التوقف في اليوم:</strong> ${formatDuration(totalForDay, 'seconds')}</span>
+                <span><strong>من الوردية الأولى:</strong> ${formatDuration(shift1, 'seconds')}</span>
+                <span><strong>من الوردية الثانية:</strong> ${formatDuration(shift2, 'seconds')}</span>
+            </div>
+            ${notes}
+        </div>`;
+    }).join('');
+
+    return `<div class="machine-fault-details-list">${rows}</div>`;
+}
+
 function renderMachineDailyDetails(faults, machineNumber, dateFrom, dateTo, nowMs) {
-    const tbody=document.querySelector('#machine-daily-details-table tbody'); if(!tbody)return; tbody.innerHTML='';
-    const {from,to}=getDateRangeBounds(dateFrom,dateTo,nowMs);
-    const first=new Date(from); first.setHours(0,0,0,0); const last=new Date(to); last.setHours(0,0,0,0);
-    const relevant=faults.filter(f=>!machineNumber||String(f.machineNumber)===String(machineNumber));
-    for(let day=new Date(first);day<=last;day.setDate(day.getDate()+1)){
-        const ds=new Date(day.getFullYear(),day.getMonth(),day.getDate()).getTime();
-        const de=new Date(day.getFullYear(),day.getMonth(),day.getDate()+1).getTime();
-        const dayNow=Math.min(nowMs,de);
-        const dayFaults=relevant.filter(f=>Number.isFinite(Number(f.startTime))&&faultIntersectsDateRange(f,ds,de-1));
-        const total=dayFaults.reduce((sum,f)=>sum+getFaultOperatingSeconds(f,ds,de,nowMs),0);
-        const count=dayFaults.length, avg=count?total/count:0, max=count?Math.max(...dayFaults.map(f=>getFaultOperatingSeconds(f,ds,de,nowMs))):0;
-        const operating=getOperatingSecondsBetween(ds,dayNow);
-        // الأيام السابقة: المقام الكامل 52,200 ثانية. اليوم الحالي: المقام هو وقت التشغيل المتاح حتى الآن.
-        const denominator = dayNow < de ? operating : FACTORY_DAILY_OPERATING_SECONDS;
-        const ratio=denominator>0?total/denominator*100:0;
-        const tr=document.createElement('tr'); tr.innerHTML=`<td>${day.toLocaleDateString('ar-EG')}</td><td>${count}</td><td>${formatDuration(total,'seconds')}</td><td>${formatDuration(avg,'seconds')}</td><td>${formatDuration(max,'seconds')}</td><td>${ratio.toFixed(1)}%</td>`; tbody.appendChild(tr);
+    const tbody = document.querySelector('#machine-daily-details-table tbody');
+    if (!tbody) return;
+    tbody.innerHTML = '';
+
+    const { from, to } = getDateRangeBounds(dateFrom, dateTo, nowMs);
+    const first = new Date(from);
+    first.setHours(0, 0, 0, 0);
+    const last = new Date(to);
+    last.setHours(0, 0, 0, 0);
+    const relevant = faults.filter(f => !machineNumber || String(f.machineNumber) === String(machineNumber));
+
+    for (let day = new Date(first); day <= last; day.setDate(day.getDate() + 1)) {
+        const ds = new Date(day.getFullYear(), day.getMonth(), day.getDate()).getTime();
+        const de = new Date(day.getFullYear(), day.getMonth(), day.getDate() + 1).getTime();
+        const dayNow = Math.min(nowMs, de);
+        const metrics = calculateMachineDayReportMetrics(day, relevant, nowMs);
+        const dayFaults = metrics.dayFaults || [];
+        const { shift1Total, shift2Total, shift1Ratio, shift2Ratio, dailyRatio } = metrics;
+        // إجمالي توقف اليوم هنا يطابق سجل الأعطال الكامل، مثل الإجمالي أعلى التقرير.
+        // نسب التعطل والوردية تظل محسوبة على زمن التشغيل فقط حسب المعادلات المعتمدة.
+        const total = dayFaults.reduce((sum, fault) => sum + getFaultDurationInRange(fault, ds, de, nowMs), 0);
+
+        const count = dayFaults.length;
+        const detailsHtml = renderMachineFaultDetailsForDay(dayFaults, ds, de, nowMs);
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td>${day.toLocaleDateString('ar-EG')}</td>
+            <td><strong>${count}</strong></td>
+            <td><strong>${formatDuration(total, 'seconds')}</strong></td>
+            <td><span class="machine-shift-duration">${formatDuration(shift1Total, 'seconds')}</span><span class="machine-shift-ratio">${shift1Ratio.toFixed(1)}%</span></td>
+            <td><span class="machine-shift-duration">${formatDuration(shift2Total, 'seconds')}</span><span class="machine-shift-ratio">${shift2Ratio.toFixed(1)}%</span></td>
+            <td><strong>${dailyRatio.toFixed(1)}%</strong></td>
+            <td><details class="machine-fault-details"><summary>🔎 عرض الأعطال (${count})</summary>${detailsHtml}</details></td>
+        `;
+        tbody.appendChild(tr);
     }
-    if(!tbody.children.length)tbody.innerHTML='<tr><td colspan="6" class="no-data">لا توجد أيام داخل الفترة المحددة.</td></tr>';
+
+    if (!tbody.children.length) {
+        tbody.innerHTML = '<tr><td colspan="7" class="no-data">لا توجد أيام داخل الفترة المحددة.</td></tr>';
+    }
 }
 
 function updateMachinesPerformanceTable() {
@@ -1786,29 +2538,89 @@ function updateMachinesPerformanceTable() {
     const {selectedMachine,dateFrom,dateTo}=getMachinePerformanceFilters(); const status=document.getElementById('machine-performance-filter-status'); const summary=document.getElementById('machine-performance-summary'); const now=getSynchronizedNow();
     if(dateFrom&&dateTo&&dateFrom>dateTo){tbody.innerHTML='<tr><td colspan="10" class="no-data">تاريخ البداية يجب أن يكون قبل أو مساويًا لتاريخ النهاية.</td></tr>';if(status)status.textContent='⚠️ الفترة الزمنية غير صحيحة';if(summary)summary.classList.add('hidden');return;}
     if(selectedMachine&&!MACHINES.some(m=>String(m.number)===selectedMachine)){tbody.innerHTML='<tr><td colspan="10" class="no-data">❌ رقم الماكينة غير موجود في قائمة الماكينات.</td></tr>';if(status)status.textContent=`❌ الماكينة ${selectedMachine} غير موجودة`;if(summary)summary.classList.add('hidden');return;}
+
     const {from,to}=getDateRangeBounds(dateFrom,dateTo,now); tbody.innerHTML='';
     const machines=selectedMachine?MACHINES.filter(m=>String(m.number)===selectedMachine):MACHINES;
+
+    // في حالة اختيار فترة متعددة الأيام، نحسب مؤشرات اليوم يومًا بيوم ثم نجمعها.
+    // لذلك "نسبة التعطل اليومي" أعلى التقرير = مجموع نسب الأيام الظاهرة أسفله،
+    // وإجمالي وقت التوقف أعلى التقرير = مجموع أوقات التوقف اليومية نفسها.
+    function getPeriodDayMetrics(machineFaults) {
+        const first = new Date(from); first.setHours(0,0,0,0);
+        const last = new Date(to); last.setHours(0,0,0,0);
+        const rows = [];
+        for (let day = new Date(first); day <= last; day.setDate(day.getDate()+1)) {
+            const dayCopy = new Date(day);
+            const metrics = calculateMachineDayReportMetrics(dayCopy, machineFaults, now);
+            rows.push(metrics);
+        }
+        return rows;
+    }
+
     machines.forEach(machine=>{
         const all=faults.filter(f=>String(f.machineNumber)===String(machine.number));
         const legacy=(!dateFrom&&!dateTo)?all.filter(f=>!Number.isFinite(Number(f.startTime))):[];
         const mf=getFaultsForMachineAndRange(all,machine.number,dateFrom,dateTo,now);
-        const count=mf.length+legacy.length;
-        const total=mf.reduce((sum,f)=>sum+getFaultDurationInRange(f,from,to,now),0)+legacy.reduce((sum,f)=>sum+getFaultDurationSeconds(f,now),0);
-        const avg=count?total/count:0; const max=count?Math.max(...mf.map(f=>getFaultDurationInRange(f,from,to,now)).concat(legacy.map(f=>getFaultDurationSeconds(f,now)))):0;
-        const rangeStop=mf.reduce((sum,f)=>sum+getFaultDurationInRange(f,from,to,now),0); const operating=getOperatingSecondsBetween(from,Math.min(to,now)); const rangeRatio=operating>0?rangeStop/operating*100:0;
-        let daily;
-        if (dateFrom && dateTo && dateFrom === dateTo) {
-            daily = calculateDailyStopRatioForDate(all, dateFrom, now);
-        } else if (!dateFrom && !dateTo) {
-            daily = calculateDailyStopRatio(all, now);
+
+        let total, count, avg, max, daily;
+        const isSingleDay = !!(dateFrom && dateTo && dateFrom === dateTo);
+        const hasDateRange = !!(dateFrom || dateTo);
+
+        if (hasDateRange) {
+            const periodMetrics = getPeriodDayMetrics(all);
+            // إجمالي الفترة يُقرأ مباشرة من سجل الأعطال الكامل، وليس من ساعات التشغيل فقط.
+            total = sumRecordedFaultDurations(all, from, to, now);
+            daily = periodMetrics.reduce((sum,m)=>sum + m.dailyRatio, 0);
+            const periodFaults = periodMetrics.flatMap(m=>m.dayFaults || []);
+            count = periodFaults.length;
+            const durations = periodMetrics.flatMap(m => (m.dayFaults || []).map(f => getFaultOperatingSeconds(f,
+                new Date(new Date(Number(f.startTime)).getFullYear(), new Date(Number(f.startTime)).getMonth(), new Date(Number(f.startTime)).getDate()).getTime(),
+                new Date(new Date(Number(f.startTime)).getFullYear(), new Date(Number(f.startTime)).getMonth(), new Date(Number(f.startTime)).getDate()+1).getTime(), now
+            )));
+            avg = count ? total / count : 0;
+            max = durations.length ? Math.max(...durations) : 0;
         } else {
-            daily = rangeRatio;
+            const dayMetrics = calculateMachineDayReportMetrics(new Date(new Date(now).getFullYear(), new Date(now).getMonth(), new Date(now).getDate()), all, now);
+            // إجمالي وقت التوقف في الجدول الرئيسي = المدة المسجلة فعليًا في سجل الأعطال.
+            total = sumRecordedFaultDurations(all, from, to, now);
+            count = dayMetrics.dayFaults.length + legacy.length;
+            avg = count ? total / count : 0;
+            const durations = dayMetrics.dayFaults.map(f=>getFaultOperatingSeconds(f,
+                new Date(new Date(now).getFullYear(), new Date(now).getMonth(), new Date(now).getDate()).getTime(),
+                new Date(new Date(now).getFullYear(), new Date(now).getMonth(), new Date(now).getDate()+1).getTime(), now));
+            if (legacy.length) durations.push(...legacy.map(f=>getFaultDurationSeconds(f,now)));
+            max = durations.length ? Math.max(...durations) : 0;
+            daily = dayMetrics.dailyRatio;
         }
-        const monthly=(dateFrom||dateTo)?rangeRatio:calculateMonthlyStopRatio(all,now);
+
+        // النسبة الشهرية تظل محسوبة بالطريقة الشهرية/الفترة الحالية، ولا تتأثر بجمع النسب اليومية.
+        let monthly;
+        if (hasDateRange) {
+            const rangeStop = mf.reduce((sum,f)=>sum+getFaultDurationInRange(f,from,to,now),0);
+            const operating=getOperatingSecondsBetween(from,Math.min(to,now));
+            monthly = operating>0 ? calculateReportFormula('monthly', {
+                downtime: rangeStop, operating, totalDowntime: rangeStop,
+                dailyOperating: FACTORY_DAILY_OPERATING_SECONDS, shift1Downtime: 0, shift2Downtime: 0,
+                shift1Operating: 27000, shift2Operating: 25200
+            }, (rangeStop/operating)*100) : 0;
+        } else {
+            monthly=calculateMonthlyStopRatio(all,now);
+        }
+
         const tr=document.createElement('tr'); tr.innerHTML=`<td>${machine.number}</td><td>${machine.stage}</td><td>${machine.zone}</td><td>${machine.section}</td><td>${count}</td><td>${formatDuration(total,'seconds')}</td><td>${formatDuration(avg,'seconds')}</td><td>${formatDuration(max,'seconds')}</td><td>${daily.toFixed(1)}%</td><td>${monthly.toFixed(1)}%</td>`; tbody.appendChild(tr);
     });
-    const filtered=getFaultsForMachineAndRange(faults,selectedMachine,dateFrom,dateTo,now); const total=filtered.reduce((sum,f)=>sum+getFaultDurationInRange(f,from,to,now),0);
-    if(summary&&(selectedMachine||dateFrom||dateTo)){summary.innerHTML=`<div class="summary-grid"><div>🔧 الماكينة: ${selectedMachine||'كل الماكينات'}</div><div>📅 الفترة: ${dateFrom||'اليوم'} → ${dateTo||'اليوم'}</div><div>🛑 عدد الأعطال: ${filtered.length}</div><div>⏱️ إجمالي التوقف: ${formatDuration(total,'seconds')}</div></div>`;summary.classList.remove('hidden');}else if(summary)summary.classList.add('hidden');
+
+    // ملخص الفترة يستخدم نفس إجمالي التوقف المستخدم في الصف العلوي، حتى لا يظهر فرق ثانية أو أكثر.
+    const selectedAll = selectedMachine ? faults.filter(f=>String(f.machineNumber)===selectedMachine) : faults;
+    let summaryTotal = 0;
+    if (dateFrom || dateTo) {
+        const first = new Date(from); first.setHours(0,0,0,0);
+        const last = new Date(to); last.setHours(0,0,0,0);
+        summaryTotal = sumRecordedFaultDurations(selectedAll, from, to, now);
+    } else {
+        summaryTotal = sumRecordedFaultDurations(selectedAll, from, to, now);
+    }
+    if(summary&&(selectedMachine||dateFrom||dateTo)){summary.innerHTML=`<div class="summary-grid"><div>🔧 الماكينة: ${selectedMachine||'كل الماكينات'}</div><div>📅 الفترة: ${dateFrom||'اليوم'} → ${dateTo||'اليوم'}</div><div>🛑 عدد الأعطال: ${getFaultsForMachineAndRange(faults,selectedMachine,dateFrom,dateTo,now).length}</div><div>⏱️ إجمالي التوقف: ${formatDuration(summaryTotal,'seconds')}</div></div>`;summary.classList.remove('hidden');}else if(summary)summary.classList.add('hidden');
     if(status){status.textContent=`✅ ${selectedMachine?`الماكينة ${selectedMachine}`:'كل الماكينات'}${dateFrom||dateTo?` | من ${dateFrom||'البداية'} إلى ${dateTo||'اليوم'}`:''}`;status.style.color='#16a34a';}
     renderMachineDailyDetails(faults,selectedMachine,dateFrom,dateTo,now);
 }
@@ -1820,7 +2632,12 @@ function applyAdvancedSearch() {
     const faults = getStoredFaults();
 
     const filtered = faults.filter(f => {
-        const matchQuery = !query || (f.machineNumber && f.machineNumber.toLowerCase().includes(query)) || (f.machineStage && f.machineStage.toLowerCase().includes(query)) || (f.faultName && f.faultName.toLowerCase().includes(query)) || String(f.faultCode) === query;
+        // البحث هنا مقصود يكون دقيقًا برقم الماكينة أو كود العطل فقط.
+        // مثال: البحث عن 5 يعرض كود العطل 5 فقط، وليس 13 أو 1 أو أي نص يحتوي الرقم 5.
+        // والبحث عن رقم ماكينة يعرض أعطال هذه الماكينة فقط.
+        const machineNumber = String(f.machineNumber ?? '').trim().toLowerCase();
+        const faultCode = String(f.faultCode ?? '').trim().toLowerCase();
+        const matchQuery = !query || machineNumber === query || faultCode === query;
         let matchDate = true;
         if (f.startTime) {
             const fDate = new Date(f.startTime).toISOString().split('T')[0];
