@@ -581,6 +581,49 @@ let alertAudioReady = false;
 let faultAlertStateById = new Map();
 let faultAlertBaselineReady = false;
 
+// ملفات التنبيه الصوتي المرفوعة: لا نحذف مولد الأصوات القديم؛ نستخدم الملفين
+// المرفوعين كصوت التنبيه الفعلي مع الإبقاء على كل وظائف المشروع الأخرى كما هي.
+const UPLOADED_ALERT_SOUNDS = {
+    leaderReceipt: 'SAVIO_VO_imogyvnb9.wav',
+    newFault: 'SAVIO_VO_t7lrxuf50.wav'
+};
+const uploadedAlertAudio = { leaderReceipt: null, newFault: null };
+
+function getUploadedAlertAudio(key) {
+    if (!UPLOADED_ALERT_SOUNDS[key]) return null;
+    if (!uploadedAlertAudio[key]) {
+        const audio = new Audio(UPLOADED_ALERT_SOUNDS[key]);
+        audio.preload = 'auto';
+        audio.volume = 1;
+        uploadedAlertAudio[key] = audio;
+    }
+    return uploadedAlertAudio[key];
+}
+
+function playUploadedAlertSound(key, fallback) {
+    if (!ensureAlertAudioReady()) return;
+    const audio = getUploadedAlertAudio(key);
+    if (!audio) { if (typeof fallback === 'function') fallback(); return; }
+    try {
+        audio.pause();
+        audio.currentTime = 0;
+        const result = audio.play();
+        if (result && typeof result.catch === 'function') {
+            result.catch(() => { if (typeof fallback === 'function') fallback(); });
+        }
+    } catch (_) {
+        if (typeof fallback === 'function') fallback();
+    }
+}
+
+// تحميل الصوتين مبكرًا حتى يكونا جاهزين عند وصول حدث Firebase.
+function preloadUploadedAlertSounds() {
+    try {
+        getUploadedAlertAudio('newFault');
+        getUploadedAlertAudio('leaderReceipt');
+    } catch (_) {}
+}
+
 function ensureAlertAudioReady() {
     try {
         const AudioCtx = window.AudioContext || window.webkitAudioContext;
@@ -619,27 +662,32 @@ function playAlertToneSequence(notes, options = {}) {
 }
 
 function playNewFaultAlert() {
-    // جرس عطل جديد: تنبيه طويل وواضح (عدة تكرارات) حتى يلفت انتباه الفنيين.
-    // النغمة مختلفة عن جرس استلام قائد الفريق.
-    const notes = [
-        880, 1174.66, 1396.91, 1174.66,
-        880, 1174.66, 1396.91, 1174.66,
-        880, 1174.66, 1396.91, 1567.98,
-        1396.91, 1174.66, 880
-    ];
-    playAlertToneSequence(notes, { duration: 0.22, gap: 0.10, volume: 0.10, type: 'square' });
+    // عند بدء العامل بتسجيل العطل: تشغيل ملف SAVIO_VO_t7lrxuf50.wav.
+    playUploadedAlertSound('newFault', () => {
+        const notes = [
+            880, 1174.66, 1396.91, 1174.66,
+            880, 1174.66, 1396.91, 1174.66,
+            880, 1174.66, 1396.91, 1567.98,
+            1396.91, 1174.66, 880
+        ];
+        playAlertToneSequence(notes, { duration: 0.22, gap: 0.10, volume: 0.10, type: 'square' });
+    });
 }
 
 function playLeaderReceiptAlert() {
-    // جرس استلام قائد الفريق: تنبيه طويل بنمط مختلف تماماً عن جرس العطل الجديد.
-    const notes = [
-        523.25, 659.25, 783.99, 659.25,
-        523.25, 659.25, 783.99, 880,
-        783.99, 659.25, 523.25,
-        783.99, 659.25, 523.25
-    ];
-    playAlertToneSequence(notes, { duration: 0.27, gap: 0.13, volume: 0.095, type: 'triangle' });
+    // عند استلام قائد الفريق للماكينة: تشغيل ملف SAVIO_VO_imogyvnb9.wav.
+    playUploadedAlertSound('leaderReceipt', () => {
+        const notes = [
+            523.25, 659.25, 783.99, 659.25,
+            523.25, 659.25, 783.99, 880,
+            783.99, 659.25, 523.25,
+            783.99, 659.25, 523.25
+        ];
+        playAlertToneSequence(notes, { duration: 0.27, gap: 0.13, volume: 0.095, type: 'triangle' });
+    });
 }
+
+preloadUploadedAlertSounds();
 
 function monitorFaultAlerts(nextFaults) {
     const list = Array.isArray(nextFaults) ? nextFaults : [];
@@ -692,6 +740,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (initialAdmin) initialAdmin.classList.add("hidden");
     document.body.classList.remove("factory5-role-worker", "factory5-role-tech", "factory5-role-leader", "factory5-role-admin");
     setupMachinePerformanceFilter();
+    setupMachinePerformanceOperatingLiveDisplay();
     initClock();
     populateFaultCodes();
     setupRealtimeSync();
@@ -2532,7 +2581,213 @@ function renderMachineDailyDetails(faults, machineNumber, dateFrom, dateTo, nowM
     }
 }
 
+let machinePerformanceOperatingLiveTimer = null;
+
+function updateMachinePerformanceOperatingDisplay() {
+    const el = document.getElementById('machine-performance-operating-value');
+    if (!el) return;
+    const { dateFrom, dateTo } = getMachinePerformanceFilters();
+    const now = getSynchronizedNow();
+    const { from, to } = getDateRangeBounds(dateFrom, dateTo, now);
+    const hasDateRange = !!(dateFrom || dateTo);
+    const operatingSeconds = hasDateRange
+        ? getOperatingSecondsBetween(from, Math.min(to, now))
+        : getCurrentMonthOperatingSeconds(now);
+    el.textContent = `${formatDuration(operatingSeconds, 'seconds')} (${Math.floor(operatingSeconds).toLocaleString('en-US')} ثانية)`;
+}
+
+function setupMachinePerformanceOperatingLiveDisplay() {
+    updateMachinePerformanceOperatingDisplay();
+    if (machinePerformanceOperatingLiveTimer) clearInterval(machinePerformanceOperatingLiveTimer);
+    machinePerformanceOperatingLiveTimer = setInterval(updateMachinePerformanceOperatingDisplay, 1000);
+}
+
+function faultIntersectsDateRange(fault, fromMs, toMs) {
+    if (!fault || !Number.isFinite(Number(fault.startTime))) return false;
+    const start = Number(fault.startTime);
+    const end = Number.isFinite(Number(fault.endTime)) ? Number(fault.endTime) : getSynchronizedNow();
+    return end >= fromMs && start <= toMs;
+}
+
+function getFaultsForMachineAndRange(faults, machineNumber, dateFrom, dateTo, nowMs) {
+    const { from, to } = getDateRangeBounds(dateFrom, dateTo, nowMs);
+    return faults.filter(f => (!machineNumber || String(f.machineNumber) === String(machineNumber)) && (!(dateFrom || dateTo) || faultIntersectsDateRange(f, from, to)));
+}
+
+// مدة العطل المسجلة فعليًا في سجل الأعطال، بدون استبعاد ساعة الراحة أو ساعات الليل.
+// تستخدمها شاشة تقرير أداء الماكينات عند عرض "إجمالي وقت التوقف" حتى يطابق
+// مجموع مدد الأعطال المسجلة بالدقيقة والثانية حرفيًا.
+function getFaultRecordedDurationInRange(fault, rangeFrom, rangeTo, nowMs = getSynchronizedNow()) {
+    if (!fault) return 0;
+
+    const start = Number(fault.startTime);
+    if (Number.isFinite(start)) {
+        const endRaw = Number(fault.endTime);
+        const end = Number.isFinite(endRaw) ? endRaw : nowMs;
+        const overlapStart = Math.max(start, Number(rangeFrom));
+        const overlapEnd = Math.min(end, Number(rangeTo), nowMs);
+        return overlapEnd > overlapStart ? (overlapEnd - overlapStart) / 1000 : 0;
+    }
+
+    // دعم السجلات القديمة التي لا تحتوي على startTime.
+    const seconds = Number(fault.durationSeconds);
+    if (Number.isFinite(seconds) && seconds >= 0) return seconds;
+    const minutes = Number(fault.durationMinutes);
+    return Number.isFinite(minutes) && minutes >= 0 ? minutes * 60 : 0;
+}
+
+function getFaultDurationInRange(fault, rangeFrom, rangeTo, nowMs = getSynchronizedNow()) {
+    if (!fault) return 0;
+    // تقرير الأداء يطابق سجل الأعطال في خانة المدة: نأخذ الثواني المكتملة
+    // لكل عطل أولاً ثم نجمعها، حتى لا تتسبب أجزاء الثانية المخفية في فرق +1 ثانية.
+    return Math.floor(Math.max(0, getFaultRecordedDurationInRange(fault, rangeFrom, rangeTo, nowMs)));
+}
+
+function sumRecordedFaultDurations(faults, rangeFrom, rangeTo, nowMs = getSynchronizedNow()) {
+    return (Array.isArray(faults) ? faults : []).reduce((sum, fault) => {
+        return sum + getFaultDurationInRange(fault, rangeFrom, rangeTo, nowMs);
+    }, 0);
+}
+
+function populateMachinePerformanceFilter() {
+    const select = document.getElementById('machine-performance-filter');
+    if (!select) return;
+    const currentValue = String(select.value || '');
+    const numbers = [...new Set((Array.isArray(MACHINES) ? MACHINES : []).map(m => String(m?.number ?? '').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ar',{numeric:true}));
+    select.innerHTML = '<option value="">كل الماكينات</option>' + numbers.map(number => `<option value="${number.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}">${number}</option>`).join('');
+    if (numbers.includes(currentValue)) select.value = currentValue; else select.value = '';
+}
+
+function setupMachinePerformanceFilter() {
+    const select = document.getElementById('machine-performance-filter');
+    if (!select) return;
+    if (select.dataset.bound !== '1') {
+        select.dataset.bound = '1';
+        select.addEventListener('change', () => { const input=document.getElementById('machine-performance-filter-input'); if(input) input.value=select.value||''; updateMachinesPerformanceTable(); });
+    }
+    populateMachinePerformanceFilter();
+    const input=document.getElementById('machine-performance-filter-input');
+    const searchBtn=document.getElementById('machine-performance-search-btn');
+    const applyBtn=document.getElementById('machine-performance-apply-btn');
+    const resetBtn=document.getElementById('machine-performance-reset-btn');
+    const apply=()=>updateMachinesPerformanceTable();
+    if(input && input.dataset.bound!=='1'){ input.dataset.bound='1'; input.addEventListener('keypress',e=>{if(e.key==='Enter')apply();}); }
+    if(searchBtn && searchBtn.dataset.bound!=='1'){ searchBtn.dataset.bound='1'; searchBtn.addEventListener('click',apply); }
+    if(applyBtn && applyBtn.dataset.bound!=='1'){ applyBtn.dataset.bound='1'; applyBtn.addEventListener('click',apply); }
+    ['machine-performance-date-from','machine-performance-date-to'].forEach(id=>{const el=document.getElementById(id); if(el&&el.dataset.bound!=='1'){el.dataset.bound='1';el.addEventListener('change',apply);}});
+    if(resetBtn && resetBtn.dataset.bound!=='1'){ resetBtn.dataset.bound='1'; resetBtn.addEventListener('click',()=>{if(input)input.value='';select.value='';['machine-performance-date-from','machine-performance-date-to'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});apply();}); }
+}
+
+function getMachineShiftIntervalsForDay(dayDate, shiftNumber) {
+    const intervals = getOperatingIntervalsForDay(dayDate);
+    if (Number(shiftNumber) === 1) return intervals.slice(0, 2);
+    if (Number(shiftNumber) === 2) return intervals.slice(2, 3);
+    return intervals;
+}
+
+function getShiftOperatingSecondsForDate(dayDate, shiftNumber, nowMs = getSynchronizedNow()) {
+    const intervals = getMachineShiftIntervalsForDay(dayDate, shiftNumber);
+    const dayEnd = new Date(dayDate.getFullYear(), dayDate.getMonth(), dayDate.getDate() + 1).getTime();
+    const effectiveEnd = Math.min(nowMs, dayEnd);
+    if (effectiveEnd <= dayDate.getTime()) return 0;
+
+    return intervals.reduce((sum, [intervalStart, intervalEnd]) => {
+        const overlapStart = intervalStart;
+        const overlapEnd = Math.min(intervalEnd, effectiveEnd);
+        if (overlapEnd <= overlapStart) return sum;
+        return sum + (overlapEnd - overlapStart) / 1000;
+    }, 0);
+}
+
+function escapeMachineReportHtml(value) {
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+}
+
+function renderMachineFaultDetailsForDay(dayFaults, dayStart, dayEnd, nowMs) {
+    if (!dayFaults.length) return '<div class="machine-fault-details-empty">لا توجد أعطال في هذا اليوم.</div>';
+
+    const rows = dayFaults.map((fault, index) => {
+        const totalForDay = getFaultDurationInRange(fault, dayStart, dayEnd, nowMs);
+        const dayDate = new Date(dayStart);
+        const shift1 = getMachineShiftIntervalsForDay(dayDate, 1).reduce((sum, [a, b]) => sum + getFaultOperatingSeconds(fault, a, b, nowMs), 0);
+        const shift2 = getMachineShiftIntervalsForDay(dayDate, 2).reduce((sum, [a, b]) => sum + getFaultOperatingSeconds(fault, a, b, nowMs), 0);
+
+        const start = Number.isFinite(Number(fault.startTime)) ? new Date(Number(fault.startTime)) : null;
+        const endRaw = Number(fault.endTime);
+        const end = Number.isFinite(endRaw) ? new Date(endRaw) : null;
+        const startText = start ? start.toLocaleTimeString('ar-EG') : '-';
+        const endText = end ? end.toLocaleTimeString('ar-EG') : 'مفتوح';
+        const code = escapeMachineReportHtml(fault.faultCode || '-');
+        const name = escapeMachineReportHtml(fault.faultName || 'عطل غير محدد');
+        const notes = fault.notes ? `<div class="machine-fault-detail-note"><strong>ملاحظات:</strong> ${escapeMachineReportHtml(fault.notes)}</div>` : '';
+
+        return `<div class="machine-fault-detail-item">
+            <div class="machine-fault-detail-title">🛑 العطل ${index + 1}: كود ${code} — ${name}</div>
+            <div class="machine-fault-detail-grid">
+                <span><strong>وقت البداية:</strong> ${startText}</span>
+                <span><strong>وقت النهاية:</strong> ${endText}</span>
+                <span><strong>مدة التوقف في اليوم:</strong> ${formatDuration(totalForDay, 'seconds')}</span>
+                <span><strong>من الوردية الأولى:</strong> ${formatDuration(shift1, 'seconds')}</span>
+                <span><strong>من الوردية الثانية:</strong> ${formatDuration(shift2, 'seconds')}</span>
+            </div>
+            ${notes}
+        </div>`;
+    }).join('');
+
+    return `<div class="machine-fault-details-list">${rows}</div>`;
+}
+
+function renderMachineDailyDetails(faults, machineNumber, dateFrom, dateTo, nowMs) {
+    const tbody = document.querySelector('#machine-daily-details-table tbody');
+    if (!tbody) return;
+    tbody.innerHTML = '';
+
+    const { from, to } = getDateRangeBounds(dateFrom, dateTo, nowMs);
+    const first = new Date(from);
+    first.setHours(0, 0, 0, 0);
+    const last = new Date(to);
+    last.setHours(0, 0, 0, 0);
+    const relevant = faults.filter(f => !machineNumber || String(f.machineNumber) === String(machineNumber));
+
+    for (let day = new Date(first); day <= last; day.setDate(day.getDate() + 1)) {
+        const ds = new Date(day.getFullYear(), day.getMonth(), day.getDate()).getTime();
+        const de = new Date(day.getFullYear(), day.getMonth(), day.getDate() + 1).getTime();
+        const dayNow = Math.min(nowMs, de);
+        const metrics = calculateMachineDayReportMetrics(day, relevant, nowMs);
+        const dayFaults = metrics.dayFaults || [];
+        const { shift1Total, shift2Total, shift1Ratio, shift2Ratio, dailyRatio } = metrics;
+        // إجمالي توقف اليوم هنا يطابق سجل الأعطال الكامل، مثل الإجمالي أعلى التقرير.
+        // نسب التعطل والوردية تظل محسوبة على زمن التشغيل فقط حسب المعادلات المعتمدة.
+        const total = dayFaults.reduce((sum, fault) => sum + getFaultDurationInRange(fault, ds, de, nowMs), 0);
+
+        const count = dayFaults.length;
+        const detailsHtml = renderMachineFaultDetailsForDay(dayFaults, ds, de, nowMs);
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td>${day.toLocaleDateString('ar-EG')}</td>
+            <td><strong>${count}</strong></td>
+            <td><strong>${formatDuration(total, 'seconds')}</strong></td>
+            <td><span class="machine-shift-duration">${formatDuration(shift1Total, 'seconds')}</span><span class="machine-shift-ratio">${shift1Ratio.toFixed(1)}%</span></td>
+            <td><span class="machine-shift-duration">${formatDuration(shift2Total, 'seconds')}</span><span class="machine-shift-ratio">${shift2Ratio.toFixed(1)}%</span></td>
+            <td><strong>${dailyRatio.toFixed(1)}%</strong></td>
+            <td><details class="machine-fault-details"><summary>🔎 عرض الأعطال (${count})</summary>${detailsHtml}</details></td>
+        `;
+        tbody.appendChild(tr);
+    }
+
+    if (!tbody.children.length) {
+        tbody.innerHTML = '<tr><td colspan="7" class="no-data">لا توجد أيام داخل الفترة المحددة.</td></tr>';
+    }
+}
+
+
 function updateMachinesPerformanceTable() {
+    updateMachinePerformanceOperatingDisplay();
     const faults=getStoredFaults(), tbody=document.querySelector('#machines-performance-table tbody'); if(!tbody)return;
     setupMachinePerformanceFilter(); populateMachinePerformanceFilter();
     const {selectedMachine,dateFrom,dateTo}=getMachinePerformanceFilters(); const status=document.getElementById('machine-performance-filter-status'); const summary=document.getElementById('machine-performance-summary'); const now=getSynchronizedNow();
