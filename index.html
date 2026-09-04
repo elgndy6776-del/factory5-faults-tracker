@@ -259,6 +259,17 @@
                     <div id="machine-performance-operating-value" style="font-size:1.15rem; font-weight:800; color:#1e293b;">0 ثانية</div>
                 </div>
 
+                <div class="card report-calculation-guide" style="margin:10px 0 15px; background:#f8fafc; border:1px solid #cbd5e1; border-right:5px solid #64748b; padding:12px 15px; border-radius:8px; line-height:1.9;">
+                    <h4 style="margin:0 0 6px; color:#334155;">🧮 طريقة حساب النسب في تقرير أداء الماكينات</h4>
+                    <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:6px 18px; color:#475569; font-size:13px;">
+                        <div><strong>نسبة التعطل اليومي:</strong> وقت التوقف المحتسب داخل التشغيل ÷ وقت تشغيل اليوم من الجدول المركزي × 100.</div>
+                        <div><strong>نسبة الوردية الأولى:</strong> توقف الوردية الأولى ÷ وقت تشغيل الوردية الأولى الفعلي × 100.</div>
+                        <div><strong>نسبة الوردية الثانية:</strong> توقف الوردية الثانية ÷ وقت تشغيل الوردية الثانية الفعلي × 100.</div>
+                        <div><strong>النسبة الشهرية:</strong> إجمالي التوقف المحتسب خلال الفترة ÷ إجمالي وقت التشغيل الفعلي للفترة × 100.</div>
+                    </div>
+                    <div style="margin-top:7px; color:#1e3a8a; font-size:12px;"><strong>مثال:</strong> 670 ثانية ÷ 52,200 ثانية × 100 = 1.2835% → <strong>1.3%</strong>. الحساب يتم بالدقة الكاملة، والتقريب للعرض فقط.</div>
+                </div>
+
                 <div class="table-responsive">
                     <table id="machines-performance-table" class="data-table">
                         <thead>
@@ -271,8 +282,8 @@
                                 <th>إجمالي وقت التوقف</th>
                                 <th>متوسط وقت الإصلاح</th>
                                 <th>أقصى وقت توقف</th>
-                                <th>نسبة التعطل اليومي</th>
-                                <th>النسبة الشهرية</th>
+                                <th title="وقت التوقف المحتسب ÷ وقت تشغيل اليوم من جدول التشغيل المركزي × 100">نسبة التعطل اليومي<br><small>(التوقف ÷ التشغيل × 100)</small></th>
+                                <th title="إجمالي التوقف المحتسب خلال الفترة ÷ إجمالي وقت التشغيل الفعلي للفترة × 100">النسبة الشهرية<br><small>(التوقف ÷ التشغيل × 100)</small></th>
                             </tr>
                         </thead>
                         <tbody></tbody>
@@ -291,9 +302,9 @@
                                     <th>التاريخ</th>
                                     <th>عدد الأعطال</th>
                                     <th>إجمالي توقف اليوم</th>
-                                    <th>الوردية الأولى<br><small>التوقف / النسبة</small></th>
-                                    <th>الوردية الثانية<br><small>التوقف / النسبة</small></th>
-                                    <th>نسبة التعطل اليومي</th>
+                                    <th title="توقف الوردية الأولى ÷ وقت تشغيل الوردية الأولى الفعلي × 100">الوردية الأولى<br><small>التوقف / (التوقف ÷ التشغيل × 100)</small></th>
+                                    <th title="توقف الوردية الثانية ÷ وقت تشغيل الوردية الثانية الفعلي × 100">الوردية الثانية<br><small>التوقف / (التوقف ÷ التشغيل × 100)</small></th>
+                                    <th title="إجمالي توقف اليوم ÷ وقت تشغيل اليوم من جدول التشغيل المركزي × 100">نسبة التعطل اليومي<br><small>(التوقف ÷ التشغيل × 100)</small></th>
                                     <th>تفاصيل الأعطال</th>
                                 </tr>
                             </thead>
@@ -430,11 +441,41 @@
                     <p class="formula-help">مثال: <code>downtime / operating * 100</code> أو <code>(downtime / operating) * 100</code>. ويمكنك استخدام <code>×</code> بدل <code>*</code> و<code>÷</code> بدل <code>/</code>.</p>
                 </div>
 
+                <div class="card formula-settings-card" style="margin-top:15px;">
+                    <h4 style="margin-top:0;color:#1e293b;">⏱️ جدول التشغيل المركزي</h4>
+                    <p style="color:#475569;line-height:1.8;">عدّل أوقات التشغيل والراحة من هنا. الحسابات تستخدم هذا الجدول تلقائيًا يومًا بعد يوم، وتدعم الفترة التي تتجاوز منتصف الليل. لا يتم تعديل بيانات الأعطال المحفوظة.</p>
+                    <div style="overflow:auto;">
+                        <div style="min-width:760px;display:grid;grid-template-columns:1.4fr .8fr .7fr .7fr .6fr;gap:8px;font-weight:700;color:#334155;padding:8px 0;">
+                            <div>اسم الفترة</div><div>النوع</div><div>الوردية</div><div>من</div><div>إلى</div>
+                        </div>
+                        <div id="operating-time-settings-rows"></div>
+                    </div>
+                    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:15px;">
+                        <button id="save-operating-time-settings-btn" class="btn btn-success">💾 حفظ الإعدادات</button>
+                        <button id="restore-last-operating-time-btn" class="btn btn-secondary">↩️ استعادة آخر إعداد</button>
+                        <button id="reset-operating-time-settings-btn" class="btn btn-secondary">🔄 استعادة الإعدادات الافتراضية</button>
+                    </div>
+                    <p id="operating-time-settings-status" style="margin:10px 0 0;font-weight:bold;"></p>
+                </div>
+
+                <div class="card formula-settings-card" style="margin-top:15px;">
+                    <h4 style="margin-top:0;color:#1e293b;">🧪 اختبار الحساب</h4>
+                    <p style="color:#475569;line-height:1.8;">اختبر أي عطل قبل الاعتماد: أدخل التاريخ والوقت، وسيتم حساب الجزء داخل التشغيل فقط.</p>
+                    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;align-items:end;">
+                        <div><label>التاريخ</label><input id="operating-test-date" class="form-control" type="date"></div>
+                        <div><label>بداية العطل</label><input id="operating-test-start" class="form-control" type="time" value="07:00"></div>
+                        <div><label>نهاية العطل</label><input id="operating-test-end" class="form-control" type="time" value="08:00"></div>
+                        <div><label>الوردية (اختياري)</label><select id="operating-test-shift" class="form-control"><option value="">تلقائي</option><option value="1">الوردية الأولى</option><option value="2">الوردية الثانية</option></select></div>
+                        <button id="run-operating-time-test-btn" class="btn btn-primary">🧮 اختبار الحساب</button>
+                    </div>
+                    <div id="operating-test-result" style="margin-top:15px;background:#f8fafc;border:1px solid #cbd5e1;border-radius:8px;padding:12px;color:#334155;">أدخل البيانات ثم اضغط اختبار الحساب.</div>
+                </div>
+
                 <div class="card formula-settings-card">
                     <div class="formula-setting-row">
                         <label for="formula-daily">نسبة التعطل اليومية:</label>
                         <input id="formula-daily" class="form-control formula-input" type="text" dir="ltr" autocomplete="off">
-                        <small>الافتراضي: <code>downtime / 52200 * 100</code></small>
+                        <small>الافتراضي: <code>downtime / dailyOperating * 100</code></small>
                     </div>
                     <div class="formula-setting-row">
                         <label for="formula-shift1">نسبة تعطل الوردية الأولى:</label>
@@ -468,6 +509,15 @@
                         <button id="print-pareto-btn" class="btn btn-primary">🖨️ طباعة التقرير بالكامل</button>
                     </div>
                 </div>
+                <div class="card report-calculation-guide" style="margin-bottom:15px; background:#f8fafc; border:1px solid #cbd5e1; border-right:5px solid #64748b; padding:12px 15px; border-radius:8px; line-height:1.9;">
+                    <h4 style="margin:0 0 6px; color:#334155;">🧮 طريقة حساب نسب تحليل Pareto</h4>
+                    <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(250px,1fr)); gap:6px 18px; color:#475569; font-size:13px;">
+                        <div><strong>نسبة التكرار (%):</strong> عدد أعطال كود العطل ÷ إجمالي عدد الأعطال × 100.</div>
+                        <div><strong>نسبة الوقت (%):</strong> وقت التوقف المحتسب لكود العطل ÷ إجمالي وقت التوقف المحتسب لكل الأعطال × 100.</div>
+                        <div><strong>النسبة التراكمية (%):</strong> مجموع نسب الوقت من أول صف حتى الصف الحالي.</div>
+                    </div>
+                    <div style="margin-top:7px; color:#1e3a8a; font-size:12px;"><strong>ملاحظة:</strong> أوقات Pareto تعتمد على وقت التوقف المحتسب داخل ساعات التشغيل الفعلية، مع استبعاد أوقات الراحة من جدول التشغيل المركزي.</div>
+                </div>
                 <div id="pareto-chart-card" class="card" style="margin-bottom: 20px; height: 400px;">
                     <canvas id="pareto-canvas"></canvas>
                 </div>
@@ -478,10 +528,10 @@
                                 <th>كود العطل</th>
                                 <th>اسم العطل</th>
                                 <th>تكرار العطل</th>
-                                <th>نسبة التكرار (%)</th>
+                                <th title="عدد أعطال كود العطل ÷ إجمالي عدد الأعطال × 100">نسبة التكرار (%)<br><small>(التكرار ÷ إجمالي الأعطال × 100)</small></th>
                                 <th>إجمالي مدة التوقف (ثواني/دقائق)</th>
-                                <th>نسبة الوقت (%)</th>
-                                <th>النسبة التراكمية (%)</th>
+                                <th title="وقت توقف كود العطل ÷ إجمالي وقت التوقف × 100">نسبة الوقت (%)<br><small>(وقت الكود ÷ إجمالي الوقت × 100)</small></th>
+                                <th title="مجموع نسب الوقت من أول صف حتى الصف الحالي">النسبة التراكمية (%)<br><small>(مجموع نسب الوقت)</small></th>
                             </tr>
                         </thead>
                         <tbody></tbody>
@@ -511,12 +561,16 @@
                 </div>
 
                 <div id="search-results-summary" class="hidden" style="margin-top: 20px;">
+                    <div class="card" style="margin-bottom:12px; background:#f8fafc; border:1px solid #cbd5e1; border-right:5px solid #64748b; padding:10px 15px; border-radius:8px; line-height:1.8; color:#475569; font-size:13px;">
+                        <strong style="color:#334155;">🧮 طريقة حساب متوسط الوقت:</strong> إجمالي الوقت المحتسب للأعطال المطابقة ÷ عدد النتائج المطابقة.
+                        <span style="display:block; color:#1e3a8a; font-size:12px;">الحساب بالدقة الكاملة، ثم يتم عرض الناتج بالثواني/الدقائق حسب تنسيق التقرير.</span>
+                    </div>
                     <div class="kpi-grid" style="grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); margin-bottom: 15px;">
                         <div class="kpi-card"><h5>النتائج المطابقة</h5><p id="res-count">0</p></div>
                         <div class="kpi-card"><h5>تم إصلاحها</h5><p id="res-finished">0</p></div>
                         <div class="kpi-card"><h5>مفتوحة حالياً</h5><p id="res-active">0</p></div>
                         <div class="kpi-card"><h5>إجمالي الوقت</h5><p id="res-total-duration">0</p></div>
-                        <div class="kpi-card"><h5>متوسط الوقت</h5><p id="res-avg-duration">0</p></div>
+                        <div class="kpi-card" title="متوسط الوقت = إجمالي الوقت المحتسب ÷ عدد النتائج المطابقة"><h5>متوسط الوقت</h5><p id="res-avg-duration">0</p></div>
                         <div class="kpi-card"><h5>أقصى وقت</h5><p id="res-max-duration">0</p></div>
                     </div>
                     <div class="table-responsive">
@@ -659,6 +713,6 @@
         </table>
     </div>
 
-    <script src="script.js?v=20260903-audio-operating-login-fixed-v2"></script>
+    <script src="script.js?v=20260904-central-operating-engine-v2"></script>
 </body>
 </html>
