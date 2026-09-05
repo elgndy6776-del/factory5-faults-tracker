@@ -495,6 +495,8 @@ const DEFAULT_FORMULA_SETTINGS = {
     daily: 'downtime / dailyOperating * 100',
     shift1: 'shift1Downtime / shift1Operating * 100',
     shift2: 'shift2Downtime / shift2Operating * 100',
+    shift1ToDate: 'shift1PeriodDowntime / shift1PeriodOperating * 100',
+    shift2ToDate: 'shift2PeriodDowntime / shift2PeriodOperating * 100',
     monthly: 'downtime / operating * 100',
     paretoFrequency: 'faultCount / totalFaultCount * 100',
     paretoTime: 'faultDuration / totalDuration * 100',
@@ -522,6 +524,7 @@ function saveFormulaSettingsLocal(settings) {
 function populateFormulaSettingsForm() {
     const map = {
         daily: 'formula-daily', shift1: 'formula-shift1', shift2: 'formula-shift2', monthly: 'formula-monthly',
+        shift1ToDate: 'formula-shift1-to-date', shift2ToDate: 'formula-shift2-to-date',
         paretoFrequency: 'formula-pareto-frequency', paretoTime: 'formula-pareto-time',
         paretoCumulative: 'formula-pareto-cumulative', operatingTest: 'formula-operating-test'
     };
@@ -625,11 +628,12 @@ function setupFormulaSettingsSync() {
 function saveFormulaSettingsFromAdmin() {
     const ids = {
         daily: 'formula-daily', shift1: 'formula-shift1', shift2: 'formula-shift2', monthly: 'formula-monthly',
+        shift1ToDate: 'formula-shift1-to-date', shift2ToDate: 'formula-shift2-to-date',
         paretoFrequency: 'formula-pareto-frequency', paretoTime: 'formula-pareto-time',
         paretoCumulative: 'formula-pareto-cumulative', operatingTest: 'formula-operating-test'
     };
     const labels = {
-        daily: 'التعطل اليومية', shift1: 'الوردية الأولى', shift2: 'الوردية الثانية', monthly: 'النسبة الشهرية/الفترة',
+        daily: 'التعطل اليومية', shift1: 'الوردية الأولى', shift2: 'الوردية الثانية', shift1ToDate: 'الوردية الأولى حتى التاريخ المحدد', shift2ToDate: 'الوردية الثانية حتى التاريخ المحدد', monthly: 'النسبة الشهرية/الفترة',
         paretoFrequency: 'تكرار Pareto', paretoTime: 'وقت Pareto', paretoCumulative: 'التراكمية في Pareto', operatingTest: 'اختبار التشغيل'
     };
     const validationVariables = {
@@ -876,7 +880,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (initialTech) initialTech.classList.add("hidden");
     if (initialLeader) initialLeader.classList.add("hidden");
     if (initialAdmin) initialAdmin.classList.add("hidden");
-    document.body.classList.remove("factory5-role-worker", "factory5-role-tech", "factory5-role-leader", "factory5-role-admin");
+    document.body.classList.remove("factory5-role-worker", "factory5-role-tech", "factory5-role-leader", "factory5-role-admin", "factory5-role-topManagement");
     setupMachinePerformanceFilter();
     setupOperatingTimeSettingsSync();
     setupMachinePerformanceOperatingLiveDisplay();
@@ -1327,6 +1331,15 @@ function formatDuration(value, unit = "minutes") {
 
 // دالة التنقل بين تبويبات لوحة الإدارة العامة
 window.switchAdminTab = function(tabId) {
+    const isTopManagement = document.body.classList.contains("factory5-role-topManagement");
+    const topAllowedTabs = ["tab-indicators", "tab-machines", "tab-pareto", "tab-search"];
+    if (isTopManagement && !topAllowedTabs.includes(tabId)) {
+        tabId = "tab-indicators";
+    }
+    if (tabId === "tab-formula-settings" && typeof formulaSettingsUnlocked !== "undefined" && !formulaSettingsUnlocked) {
+        showFormulaSettingsPasswordModal();
+        return;
+    }
     const tabBtns = document.querySelectorAll(".tab-btn");
     const tabPanes = document.querySelectorAll(".tab-pane");
 
@@ -1372,6 +1385,12 @@ const PROTECTED_VIEW_CONFIG = {
         description: "أدخل كلمة المرور الخاصة بلوحة تحكم الإدارة:",
         password: "205080",
         sessionKey: "factory5_admin_authenticated"
+    },
+    topManagement: {
+        title: "تسجيل دخول Top Management",
+        description: "أدخل كلمة المرور الخاصة بإدارة Top Management لمشاهدة مؤشرات الأداء والتقارير العامة:",
+        password: "226622",
+        sessionKey: "factory5_top_management_authenticated"
     }
 };
 
@@ -1383,6 +1402,7 @@ function restoreAdminStateOnLoad() {
     sessionStorage.removeItem("factory5_admin_authenticated");
     sessionStorage.removeItem(PROTECTED_VIEW_CONFIG.tech.sessionKey);
     sessionStorage.removeItem(PROTECTED_VIEW_CONFIG.leader.sessionKey);
+    sessionStorage.removeItem(PROTECTED_VIEW_CONFIG.topManagement.sessionKey);
 
     const adminPanel = document.getElementById("admin-panel");
     const loginModal = document.getElementById("login-modal");
@@ -1394,10 +1414,12 @@ function restoreAdminStateOnLoad() {
 
 
 function showFactory5Role(role) {
-    document.body.classList.remove("factory5-role-worker", "factory5-role-tech", "factory5-role-leader", "factory5-role-admin");
+    document.body.classList.remove("factory5-role-worker", "factory5-role-tech", "factory5-role-leader", "factory5-role-admin", "factory5-role-topManagement");
     document.body.classList.add(`factory5-role-${role}`);
     const adminPanel = document.getElementById("admin-panel");
-    if (adminPanel && role !== "admin") adminPanel.classList.add("hidden");
+    if (adminPanel && role !== "admin" && role !== "topManagement") adminPanel.classList.add("hidden");
+    const title = document.getElementById("admin-panel-title");
+    if (title) title.textContent = role === "topManagement" ? "🏢 لوحة Top Management — مؤشرات وتقارير عامة" : "📊 لوحة تحكم الإدارة والتقارير";
 }
 
 function setupEventListeners() {
@@ -1439,6 +1461,7 @@ function setupEventListeners() {
             sessionStorage.removeItem("factory5_admin_authenticated");
             sessionStorage.removeItem(PROTECTED_VIEW_CONFIG.tech.sessionKey);
             sessionStorage.removeItem(PROTECTED_VIEW_CONFIG.leader.sessionKey);
+            sessionStorage.removeItem(PROTECTED_VIEW_CONFIG.topManagement.sessionKey);
             if (initialLoginPage) initialLoginPage.classList.add("hidden");
             setActiveView("worker");
             return;
@@ -1456,13 +1479,15 @@ function setupEventListeners() {
         }
 
         sessionStorage.setItem(cfg.sessionKey, "true");
-        if (initialSelectedRole === "admin") {
-            sessionStorage.setItem("factory5_admin_authenticated", "true");
+        if (initialSelectedRole === "admin" || initialSelectedRole === "topManagement") {
+            if (initialSelectedRole === "admin") sessionStorage.setItem("factory5_admin_authenticated", "true");
+            if (initialSelectedRole === "topManagement") sessionStorage.setItem(PROTECTED_VIEW_CONFIG.topManagement.sessionKey, "true");
             if (initialLoginPage) initialLoginPage.classList.add("hidden");
-            showFactory5Role("admin");
+            showFactory5Role(initialSelectedRole);
             const adminPanel = document.getElementById("admin-panel");
             if (adminPanel) adminPanel.classList.remove("hidden");
-            switchAdminTab(sessionStorage.getItem("factory5_active_tab") || "tab-indicators");
+            const allowed = initialSelectedRole === "topManagement" ? "tab-indicators" : (sessionStorage.getItem("factory5_active_tab") || "tab-indicators");
+            switchAdminTab(allowed);
         } else {
             if (initialLoginPage) initialLoginPage.classList.add("hidden");
             setActiveView(initialSelectedRole);
@@ -1557,7 +1582,7 @@ function setupEventListeners() {
     }
 
     function returnToInitialLogin() {
-        document.body.classList.remove("factory5-role-worker", "factory5-role-tech", "factory5-role-leader", "factory5-role-admin");
+        document.body.classList.remove("factory5-role-worker", "factory5-role-tech", "factory5-role-leader", "factory5-role-admin", "factory5-role-topManagement");
         const adminPanel = document.getElementById("admin-panel");
         if (adminPanel) adminPanel.classList.add("hidden");
         const initialLogin = document.getElementById("initial-login-page");
@@ -1674,10 +1699,16 @@ function setupEventListeners() {
             const adminPanel = document.getElementById("admin-panel");
             if (adminPanel) adminPanel.classList.add("hidden");
             sessionStorage.removeItem("factory5_admin_authenticated");
+            sessionStorage.removeItem(PROTECTED_VIEW_CONFIG.topManagement.sessionKey);
             sessionStorage.removeItem("factory5_active_tab");
             returnToInitialLogin();
         });
     }
+
+    // طباعة أي شاشة متاحة لـ Top Management كما تظهر أمامه.
+    document.querySelectorAll(".top-management-print-btn").forEach(btn => {
+        btn.addEventListener("click", () => printTopManagementTab(btn.dataset.printTab));
+    });
 
     // 7. تبويبات لوحة التحكم
     const tabBtns = document.querySelectorAll(".tab-btn");
@@ -1700,6 +1731,62 @@ function setupEventListeners() {
     const printChartOnlyBtn = document.getElementById("print-chart-only-btn");
     if (printChartOnlyBtn) printChartOnlyBtn.addEventListener("click", printParetoChartOnly);
 
+    const FORMULA_SETTINGS_PASSWORD = '180120';
+    let formulaSettingsUnlocked = false;
+
+    function showFormulaSettingsPasswordModal() {
+        const modal = document.getElementById('formula-settings-password-modal');
+        const input = document.getElementById('formula-settings-password-input');
+        const error = document.getElementById('formula-settings-password-error');
+        if (!modal) return;
+        modal.style.display = 'flex';
+        if (input) { input.value = ''; setTimeout(() => input.focus(), 50); }
+        if (error) error.style.display = 'none';
+    }
+
+    function hideFormulaSettingsPasswordModal() {
+        const modal = document.getElementById('formula-settings-password-modal');
+        if (modal) modal.style.display = 'none';
+    }
+
+    function protectFormulaSettingsTab(tabButton) {
+        if (formulaSettingsUnlocked) return true;
+        showFormulaSettingsPasswordModal();
+        return false;
+    }
+
+    function unlockFormulaSettings() {
+        const input = document.getElementById('formula-settings-password-input');
+        const error = document.getElementById('formula-settings-password-error');
+        if (input && input.value === FORMULA_SETTINGS_PASSWORD) {
+            formulaSettingsUnlocked = true;
+            hideFormulaSettingsPasswordModal();
+            if (typeof switchAdminTab === 'function') switchAdminTab('tab-formula-settings');
+            return true;
+        }
+        if (error) error.style.display = 'block';
+        if (input) { input.select(); input.focus(); }
+        return false;
+    }
+
+    function setupFormulaSettingsProtection() {
+        document.querySelectorAll('.formula-settings-protected-tab').forEach(btn => {
+            btn.addEventListener('click', function(e) {
+                if (!formulaSettingsUnlocked) {
+                    e.preventDefault(); e.stopImmediatePropagation();
+                    showFormulaSettingsPasswordModal();
+                }
+            }, true);
+        });
+        const submit = document.getElementById('formula-settings-password-submit');
+        const cancel = document.getElementById('formula-settings-password-cancel');
+        const input = document.getElementById('formula-settings-password-input');
+        if (submit) submit.addEventListener('click', unlockFormulaSettings);
+        if (cancel) cancel.addEventListener('click', hideFormulaSettingsPasswordModal);
+        if (input) input.addEventListener('keydown', e => { if (e.key === 'Enter') unlockFormulaSettings(); if (e.key === 'Escape') hideFormulaSettingsPasswordModal(); });
+    }
+
+    setupFormulaSettingsProtection();
     const saveFormulaSettingsBtn = document.getElementById("save-formula-settings-btn");
     if (saveFormulaSettingsBtn) saveFormulaSettingsBtn.addEventListener("click", saveFormulaSettingsFromAdmin);
     const resetFormulaSettingsBtn = document.getElementById("reset-formula-settings-btn");
@@ -2274,6 +2361,26 @@ window.deleteFault = function(faultId) {
     alert("تم حذف العطل نهائياً من السجل وجميع التقارير. وسيظهر الحذف تلقائياً على باقي الأجهزة.");
 };
 
+function printTopManagementTab(tabId) {
+    const allowed = ["tab-indicators", "tab-machines", "tab-pareto", "tab-search"];
+    if (!allowed.includes(tabId)) return;
+    if (tabId === "tab-pareto" && typeof executePrintPareto === "function") {
+        executePrintPareto();
+        return;
+    }
+    const pane = document.getElementById(tabId);
+    if (!pane) return;
+    const clone = pane.cloneNode(true);
+    clone.querySelectorAll(".top-print-row, button, input, select, textarea").forEach(el => {
+        if (el.classList && el.classList.contains("top-print-row")) el.remove();
+        else if (el.tagName === "BUTTON") el.remove();
+    });
+    const win = window.open("", "_blank");
+    if (!win) return alert("المتصفح منع نافذة الطباعة. اسمح بالنوافذ المنبثقة ثم حاول مرة أخرى.");
+    win.document.write(`<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>Top Management - ${tabId}</title><style>body{font-family:Tahoma,Arial,sans-serif;padding:20px;color:#1e293b;direction:rtl}table{width:100%;border-collapse:collapse}th,td{border:1px solid #cbd5e1;padding:7px;text-align:center}h1,h2,h3,h4{color:#1e293b}.hidden{display:none!important}.tab-pane{display:block!important}.kpi-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}.kpi-card{border:1px solid #cbd5e1;padding:15px;border-radius:8px;text-align:center}.machine-formula-modal,.modal{display:none!important}@media print{body{padding:8px}.kpi-grid{grid-template-columns:repeat(4,1fr)}}</style></head><body><h2>🏢 Top Management — تقرير عام</h2>${clone.innerHTML}<script>window.onload=function(){setTimeout(function(){window.print();},250);};<\/script></body></html>`);
+    win.document.close();
+}
+
 function verifyScreenPassword() {
     const view = pendingProtectedView;
     const cfg = PROTECTED_VIEW_CONFIG[view];
@@ -2286,12 +2393,12 @@ function verifyScreenPassword() {
         sessionStorage.setItem(cfg.sessionKey, "true");
         const page = document.getElementById("screen-login-page");
         if (page) page.classList.add("hidden");
-        if (view === "admin") {
+        if (view === "admin" || view === "topManagement") {
             const adminPanel = document.getElementById("admin-panel");
             if (adminPanel) adminPanel.classList.remove("hidden");
-            sessionStorage.setItem("factory5_admin_authenticated", "true");
-            showFactory5Role("admin");
-            switchAdminTab(sessionStorage.getItem("factory5_active_tab") || "tab-indicators");
+            if (view === "admin") sessionStorage.setItem("factory5_admin_authenticated", "true");
+            showFactory5Role(view === "topManagement" ? "topManagement" : "admin");
+            switchAdminTab(view === "topManagement" ? "tab-indicators" : (sessionStorage.getItem("factory5_active_tab") || "tab-indicators"));
         } else {
             setActiveView(view);
         }
@@ -2316,12 +2423,12 @@ function verifyProtectedPassword() {
         sessionStorage.setItem(cfg.sessionKey, "true");
         const modal = document.getElementById("login-modal");
         if (modal) modal.classList.add("hidden");
-        if (view === "admin") {
+        if (view === "admin" || view === "topManagement") {
             const adminPanel = document.getElementById("admin-panel");
             if (adminPanel) adminPanel.classList.remove("hidden");
-            sessionStorage.setItem("factory5_admin_authenticated", "true");
-            showFactory5Role("admin");
-            switchAdminTab(sessionStorage.getItem("factory5_active_tab") || "tab-indicators");
+            if (view === "admin") sessionStorage.setItem("factory5_admin_authenticated", "true");
+            showFactory5Role(view === "topManagement" ? "topManagement" : "admin");
+            switchAdminTab(view === "topManagement" ? "tab-indicators" : (sessionStorage.getItem("factory5_active_tab") || "tab-indicators"));
         } else {
             setActiveView(view);
         }
@@ -3157,7 +3264,7 @@ function updateMachineFormulaExamples(machineFaults, selectedMachine, dateFrom, 
     const set = (id, html) => { const el = document.getElementById(id); if (el) el.innerHTML = html; };
     if (!selectedMachine) {
         const msg = '<strong>مثال:</strong> اكتب رقم الماكينة واضغط بحث لعرض الوقت الفعلي والحساب.';
-        set('formula-example-shift1', msg); set('formula-example-shift2', msg); set('formula-example-daily', msg); set('formula-example-monthly', msg);
+        set('formula-example-shift1', msg); set('formula-example-shift2', msg); set('formula-example-shift1-to-date', msg); set('formula-example-shift2-to-date', msg); set('formula-example-daily', msg); set('formula-example-monthly', msg);
         return;
     }
 
@@ -3186,6 +3293,14 @@ function updateMachineFormulaExamples(machineFaults, selectedMachine, dateFrom, 
     };
     const shift1Pct = shift1Denominator > 0 ? calculateReportFormula('shift1', { ...commonVars, downtime: shift1, operating: shift1Denominator }, (shift1 / shift1Denominator) * 100) : 0;
     const shift2Pct = shift2Denominator > 0 ? calculateReportFormula('shift2', { ...commonVars, downtime: shift2, operating: shift2Denominator }, (shift2 / shift2Denominator) * 100) : 0;
+    const shift1ToDatePct = shift1Denominator > 0 ? calculateReportFormula('shift1ToDate', {
+        ...commonVars, shift1PeriodDowntime: shift1, shift1PeriodOperating: shift1Denominator,
+        shift2PeriodDowntime: shift2, shift2PeriodOperating: shift2Denominator
+    }, (shift1 / shift1Denominator) * 100) : 0;
+    const shift2ToDatePct = shift2Denominator > 0 ? calculateReportFormula('shift2ToDate', {
+        ...commonVars, shift1PeriodDowntime: shift1, shift1PeriodOperating: shift1Denominator,
+        shift2PeriodDowntime: shift2, shift2PeriodOperating: shift2Denominator
+    }, (shift2 / shift2Denominator) * 100) : 0;
     const dailyPct = dailyDenominator > 0 ? calculateReportFormula('daily', commonVars, (daily / dailyDenominator) * 100) : 0;
 
     set('formula-example-shift1', shift1Denominator > 0
@@ -3195,6 +3310,14 @@ function updateMachineFormulaExamples(machineFaults, selectedMachine, dateFrom, 
     set('formula-example-shift2', shift2Denominator > 0
         ? `<strong>مثال فعلي للماكينة ${escapeMachineReportHtml(selectedMachine)}:</strong> توقف الوردية الثانية = ${fmt(shift2)}، وظهرت أعطال الوردية في ${shift2Days} يوم → المعادلة الحالية: <code>${escapeMachineReportHtml(FORMULA_SETTINGS.shift2)}</code> → <strong>${shift2Pct.toFixed(4)}%</strong> → ${shift2Pct.toFixed(1)}%.`
         : `<strong>مثال فعلي للماكينة ${escapeMachineReportHtml(selectedMachine)}:</strong> لا يوجد توقف مسجل للوردية الثانية في الفترة المحددة.`);
+
+    const periodLabel = `${first.toLocaleDateString('ar-EG')} إلى ${last.toLocaleDateString('ar-EG')}`;
+    set('formula-example-shift1-to-date', shift1Denominator > 0
+        ? `<strong>حتى التاريخ المحدد (${periodLabel}):</strong> توقف الوردية الأولى = ${fmt(shift1)} ÷ (${27_000} × ${shift1Days} يوم) = ${shift1Denominator.toLocaleString('en-US')} ثانية → المعادلة الحالية: <code>${escapeMachineReportHtml(FORMULA_SETTINGS.shift1ToDate)}</code> → <strong>${shift1ToDatePct.toFixed(4)}%</strong> → ${shift1ToDatePct.toFixed(1)}%.`
+        : `<strong>حتى التاريخ المحدد (${periodLabel}):</strong> لا يوجد توقف مسجل للوردية الأولى.`);
+    set('formula-example-shift2-to-date', shift2Denominator > 0
+        ? `<strong>حتى التاريخ المحدد (${periodLabel}):</strong> توقف الوردية الثانية = ${fmt(shift2)} ÷ (${25_200} × ${shift2Days} يوم) = ${shift2Denominator.toLocaleString('en-US')} ثانية → المعادلة الحالية: <code>${escapeMachineReportHtml(FORMULA_SETTINGS.shift2ToDate)}</code> → <strong>${shift2ToDatePct.toFixed(4)}%</strong> → ${shift2ToDatePct.toFixed(1)}%.`
+        : `<strong>حتى التاريخ المحدد (${periodLabel}):</strong> لا يوجد توقف مسجل للوردية الثانية.`);
 
     set('formula-example-daily', `<strong>مثال فعلي للماكينة ${escapeMachineReportHtml(selectedMachine)}:</strong> إجمالي توقف الفترة = ${fmt(daily)}، والمقام اليومي ثابت = 52,200 ثانية → المعادلة الحالية: <code>${escapeMachineReportHtml(FORMULA_SETTINGS.daily)}</code> → <strong>${dailyPct.toFixed(4)}%</strong> → ${dailyPct.toFixed(1)}%.`);
 
@@ -3209,6 +3332,29 @@ function updateMachineFormulaExamples(machineFaults, selectedMachine, dateFrom, 
         ? `<strong>مثال فعلي للماكينة ${escapeMachineReportHtml(selectedMachine)}:</strong> إجمالي توقف الفترة = ${fmt(monthlyDowntime)} ÷ وقت تشغيل الفترة = ${Math.floor(monthlyOperating).toLocaleString('en-US')} ثانية → المعادلة الحالية: <code>${escapeMachineReportHtml(FORMULA_SETTINGS.monthly)}</code> → <strong>${monthlyPct.toFixed(4)}%</strong> → ${monthlyPct.toFixed(1)}%.`
         : `<strong>مثال فعلي للماكينة ${escapeMachineReportHtml(selectedMachine)}:</strong> لا يوجد وقت تشغيل متاح للفترة المحددة.`);
 }
+function calculateShiftToDateMetrics(machineFaults, from, to, now) {
+    const first = new Date(from); first.setHours(0,0,0,0);
+    const last = new Date(to); last.setHours(0,0,0,0);
+    let shift1Downtime = 0, shift2Downtime = 0;
+    let shift1FaultDays = 0, shift2FaultDays = 0;
+    for (let day = new Date(first); day <= last; day.setDate(day.getDate()+1)) {
+        const dayCopy = new Date(day);
+        const metrics = calculateMachineDayReportMetrics(dayCopy, machineFaults, now);
+        shift1Downtime += Number(metrics.shift1Total) || 0;
+        shift2Downtime += Number(metrics.shift2Total) || 0;
+        if ((Number(metrics.shift1Total) || 0) > 0) shift1FaultDays++;
+        if ((Number(metrics.shift2Total) || 0) > 0) shift2FaultDays++;
+    }
+    return {
+        shift1Downtime,
+        shift2Downtime,
+        shift1Operating: 27000 * shift1FaultDays,
+        shift2Operating: 25200 * shift2FaultDays,
+        shift1FaultDays,
+        shift2FaultDays
+    };
+}
+
 function updateMachinesPerformanceTable() {
     updateMachinePerformanceOperatingDisplay();
     const faults=getStoredFaults(), tbody=document.querySelector('#machines-performance-table tbody'); if(!tbody)return;
@@ -3241,6 +3387,20 @@ function updateMachinesPerformanceTable() {
         const all=faults.filter(f=>String(f.machineNumber)===String(machine.number));
         const legacy=(!dateFrom&&!dateTo)?all.filter(f=>!Number.isFinite(Number(f.startTime))):[];
         const mf=getFaultsForMachineAndRange(all,machine.number,dateFrom,dateTo,now);
+        const toDateFrom = dateFrom || `${new Date(now).getFullYear()}-${String(new Date(now).getMonth()+1).padStart(2,'0')}-01`;
+        const toDateTo = dateTo || `${new Date(now).getFullYear()}-${String(new Date(now).getMonth()+1).padStart(2,'0')}-${String(new Date(now).getDate()).padStart(2,'0')}`;
+        const toDateBounds = getDateRangeBounds(toDateFrom, toDateTo, now);
+        const shiftToDate = calculateShiftToDateMetrics(all, toDateBounds.from, toDateBounds.to, now);
+        const shift1ToDateRatio = shiftToDate.shift1Operating > 0 ? calculateReportFormula('shift1ToDate', {
+            shift1PeriodDowntime: shiftToDate.shift1Downtime, shift1PeriodOperating: shiftToDate.shift1Operating,
+            shift1Downtime: shiftToDate.shift1Downtime, shift1Operating: shiftToDate.shift1Operating,
+            shift2PeriodDowntime: shiftToDate.shift2Downtime, shift2PeriodOperating: shiftToDate.shift2Operating
+        }, (shiftToDate.shift1Downtime / shiftToDate.shift1Operating) * 100) : 0;
+        const shift2ToDateRatio = shiftToDate.shift2Operating > 0 ? calculateReportFormula('shift2ToDate', {
+            shift2PeriodDowntime: shiftToDate.shift2Downtime, shift2PeriodOperating: shiftToDate.shift2Operating,
+            shift1PeriodDowntime: shiftToDate.shift1Downtime, shift1PeriodOperating: shiftToDate.shift1Operating,
+            shift2Downtime: shiftToDate.shift2Downtime, shift2Operating: shiftToDate.shift2Operating
+        }, (shiftToDate.shift2Downtime / shiftToDate.shift2Operating) * 100) : 0;
 
         let total, count, avg, max, daily;
         const isSingleDay = !!(dateFrom && dateTo && dateFrom === dateTo);
