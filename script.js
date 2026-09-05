@@ -13,6 +13,92 @@ if (typeof firebase !== 'undefined' && !firebase.apps.length) {
 }
 const rtdb = typeof firebase !== 'undefined' ? firebase.database() : null;
 
+// طبقة احتياطية للاتصال بـFirebase عبر REST: لو جهاز (خصوصًا الموبايل)
+// لم ينجح في تحميل/تثبيت مستمع Firebase SDK، يظل يقرأ نفس البيانات السحابية
+// بدل الرجوع إلى localStorage القديم. هذا يمنع اختلاف البيانات بين الأجهزة.
+const FIREBASE_REST_BASE = 'https://factory5-faults-default-rtdb.firebaseio.com';
+let firebaseRealtimeConnected = false;
+let restFallbackTimer = null;
+let restLastFaultSignature = '';
+
+async function firebaseRestGet(path) {
+    const response = await fetch(`${FIREBASE_REST_BASE}/${path}.json?cb=${Date.now()}`, {
+        method: 'GET',
+        cache: 'no-store',
+        headers: { 'Cache-Control': 'no-cache' }
+    });
+    if (!response.ok) throw new Error(`Firebase REST ${response.status}`);
+    return await response.json();
+}
+
+async function firebaseRestPut(path, value) {
+    const response = await fetch(`${FIREBASE_REST_BASE}/${path}.json`, {
+        method: 'PUT',
+        cache: 'no-store',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(value)
+    });
+    if (!response.ok) throw new Error(`Firebase REST ${response.status}`);
+    return await response.json();
+}
+
+function applyRestFaultData(data) {
+    const list = data && typeof data === 'object' ? Object.values(data) : [];
+    const signature = JSON.stringify(list.map(f => ({
+        id: f && f.id, status: f && f.status, startTime: f && f.startTime,
+        endTime: f && f.endTime, durationSeconds: f && f.durationSeconds
+    })).sort((a,b) => String(a.id).localeCompare(String(b.id))));
+    if (signature === restLastFaultSignature && firebaseFaultsSyncReady) return;
+    restLastFaultSignature = signature;
+    applyFirebaseFaultSnapshot(data);
+}
+
+async function restFallbackRefresh() {
+    try {
+        // قراءة الساعة من نفس Firebase حتى لا يعتمد وقت التشغيل على ساعة/منطقة الجهاز.
+        const offset = Number(await firebaseRestGet('.info/serverTimeOffset'));
+        if (Number.isFinite(offset)) {
+            serverTimeOffsetMs = offset;
+            serverTimeSyncReady = true;
+        }
+    } catch (_) {}
+
+    // لو الـSDK متصل بالفعل، لا نحتاج نسخ البيانات مرة ثانية.
+    if (firebaseRealtimeConnected && firebaseFaultsSyncReady) {
+        updateMachinePerformanceOperatingDisplay();
+        return;
+    }
+
+    try {
+        const faults = await firebaseRestGet('factory5_faults');
+        applyRestFaultData(faults);
+    } catch (_) {}
+
+    // تشغيل إعدادات التشغيل من Firebase عند غياب مستمع SDK.
+    if (!rtdb || !operatingTimeSettingsSyncReady) {
+        try {
+            const value = await firebaseRestGet('factory5_operating_time_settings');
+            if (value && Array.isArray(value.slots) && value.slots.length) {
+                OPERATING_TIME_SETTINGS = cloneOperatingTimeSettings(value);
+                saveOperatingTimeSettingsLocal(OPERATING_TIME_SETTINGS);
+                populateOperatingTimeSettingsForm();
+            }
+        } catch (_) {}
+    }
+
+    updateLiveFaultDurations(getSynchronizedNow());
+    updateMachinePerformanceOperatingDisplay();
+}
+
+function setupFirebaseRestFallback() {
+    restFallbackRefresh();
+    if (restFallbackTimer) clearInterval(restFallbackTimer);
+    // فحص احتياطي خفيف فقط عندما لا يكون اتصال Firebase SDK متاحًا.
+    restFallbackTimer = setInterval(() => {
+        if (!firebaseRealtimeConnected || !firebaseFaultsSyncReady) restFallbackRefresh();
+    }, 2000);
+}
+
 const DEFAULT_MACHINES = [
     { number: "1712", zone: "منطقة 1", section: "تجهيزات منطقة 1", stage: "منشار" },
     { number: "982", zone: "منطقة 1", section: "تجهيزات منطقة 1", stage: "متقاب" },
@@ -797,6 +883,7 @@ document.addEventListener("DOMContentLoaded", () => {
     initClock();
     populateFaultCodes();
     setupRealtimeSync();
+    setupFirebaseRestFallback();
     setupLiveFaultRefresh();
     setupServerClockSync();
     setupMachineSync();
@@ -868,6 +955,13 @@ function applyFirebaseFaultSnapshot(data) {
 
 function setupRealtimeSync() {
     if (!rtdb) return;
+    rtdb.ref('.info/connected').on('value', snapshot => {
+        firebaseRealtimeConnected = snapshot.val() === true;
+        if (firebaseRealtimeConnected) {
+            // عند رجوع الاتصال، أعد قراءة السجل الكامل فورًا ولا تعتمد على النسخة المحلية.
+            rtdb.ref('factory5_faults').once('value').then(snapshot => applyFirebaseFaultSnapshot(snapshot.val())).catch(() => {});
+        }
+    });
     const faultsRef = rtdb.ref('factory5_faults');
 
     // المستمع الأساسي: أي تغيير في أي عطل يعيد رسم الواجهات فورًا.
@@ -1096,7 +1190,7 @@ window.printMachineQR = printMachineQR;
 // مزامنة الساعة مع ساعة Firebase حتى تستخدم كل الأجهزة (لاب/موبايل/كمبيوتر)
 // نفس المرجع الزمني، مهما كان ضبط ساعة الجهاز المحلي مختلفًا.
 function setupServerClockSync() {
-    if (!rtdb) return;
+    if (!rtdb) { restFallbackRefresh(); return; }
     rtdb.ref('.info/serverTimeOffset').on('value', (snapshot) => {
         const value = Number(snapshot.val());
         serverTimeOffsetMs = Number.isFinite(value) ? value : 0;
@@ -1177,12 +1271,12 @@ function saveStoredFaults(faults) {
     // نسخة احتياطية محلية: لا يتم مسح الأعطال عند الخروج من الصفحة.
     localStorage.setItem("factory5_faults_backup", JSON.stringify(safeFaults));
 
-    if (!rtdb) return;
     const faultsObj = {};
     safeFaults.forEach(f => {
         if (f && f.id) faultsObj[f.id] = f;
     });
-    rtdb.ref('factory5_faults').set(faultsObj);
+    if (rtdb) rtdb.ref('factory5_faults').set(faultsObj).catch(() => firebaseRestPut('factory5_faults', faultsObj).catch(() => {}));
+    else firebaseRestPut('factory5_faults', faultsObj).catch(() => {});
 }
 
 // حساب مدة العطل بدقة من الطابع الزمني الحقيقي (Date.now) دون تقريب للدقائق.
@@ -2489,7 +2583,8 @@ function saveOperatingTimeSettingsFromAdmin() {
     savePreviousOperatingTimeSettings(OPERATING_TIME_SETTINGS);
     OPERATING_TIME_SETTINGS = next;
     saveOperatingTimeSettingsLocal(OPERATING_TIME_SETTINGS);
-    if (rtdb) rtdb.ref('factory5_operating_time_settings').set(OPERATING_TIME_SETTINGS);
+    if (rtdb) rtdb.ref('factory5_operating_time_settings').set(OPERATING_TIME_SETTINGS).catch(() => firebaseRestPut('factory5_operating_time_settings', OPERATING_TIME_SETTINGS).catch(() => {}));
+    else firebaseRestPut('factory5_operating_time_settings', OPERATING_TIME_SETTINGS).catch(() => {});
     const status = document.getElementById('operating-time-settings-status');
     if (status) { status.textContent = '✅ تم حفظ جدول التشغيل ومزامنته بدون تعديل بيانات الأعطال.'; status.style.color = '#16a34a'; }
     updateMachinePerformanceOperatingDisplay(); updateMachinesPerformanceTable();
@@ -2502,7 +2597,8 @@ function restorePreviousOperatingTimeSettingsFromAdmin() {
     OPERATING_TIME_SETTINGS = previous;
     saveOperatingTimeSettingsLocal(OPERATING_TIME_SETTINGS);
     populateOperatingTimeSettingsForm();
-    if (rtdb) rtdb.ref('factory5_operating_time_settings').set(OPERATING_TIME_SETTINGS);
+    if (rtdb) rtdb.ref('factory5_operating_time_settings').set(OPERATING_TIME_SETTINGS).catch(() => firebaseRestPut('factory5_operating_time_settings', OPERATING_TIME_SETTINGS).catch(() => {}));
+    else firebaseRestPut('factory5_operating_time_settings', OPERATING_TIME_SETTINGS).catch(() => {});
     const status = document.getElementById('operating-time-settings-status');
     if (status) { status.textContent = '↩️ تم استعادة آخر إعداد تشغيل.'; status.style.color = '#2563eb'; }
     updateMachinePerformanceOperatingDisplay(); updateMachinesPerformanceTable();
@@ -2513,7 +2609,8 @@ function resetOperatingTimeSettingsFromAdmin() {
     OPERATING_TIME_SETTINGS = cloneOperatingTimeSettings();
     saveOperatingTimeSettingsLocal(OPERATING_TIME_SETTINGS);
     populateOperatingTimeSettingsForm();
-    if (rtdb) rtdb.ref('factory5_operating_time_settings').set(OPERATING_TIME_SETTINGS);
+    if (rtdb) rtdb.ref('factory5_operating_time_settings').set(OPERATING_TIME_SETTINGS).catch(() => firebaseRestPut('factory5_operating_time_settings', OPERATING_TIME_SETTINGS).catch(() => {}));
+    else firebaseRestPut('factory5_operating_time_settings', OPERATING_TIME_SETTINGS).catch(() => {});
     const status = document.getElementById('operating-time-settings-status');
     if (status) { status.textContent = '🔄 تم استعادة الإعدادات الافتراضية.'; status.style.color = '#2563eb'; }
     updateMachinePerformanceOperatingDisplay(); updateMachinesPerformanceTable();
@@ -2668,9 +2765,10 @@ function calculateMonthlyStopRatio(machineFaults, nowMs = getSynchronizedNow()) 
 }
 
 function getMachinePerformanceFilters() {
-    const input = document.getElementById('machine-performance-filter-input');
+    // الرقم المطبق فعليًا يأتي من select المخفي؛ خانة الكتابة تعتبر قيمة بحث مؤقتة
+    // ولا تؤثر على التقرير إلا بعد الضغط على زر "بحث".
     const select = document.getElementById('machine-performance-filter');
-    const selectedMachine = String(input ? input.value : '').trim() || String(select ? select.value || '' : '');
+    const selectedMachine = String(select ? select.value || '' : '').trim();
     const dateFrom = String(document.getElementById('machine-performance-date-from')?.value || '');
     const dateTo = String(document.getElementById('machine-performance-date-to')?.value || '');
     return { selectedMachine, dateFrom, dateTo };
@@ -2741,8 +2839,22 @@ function setupMachinePerformanceFilter() {
     const applyBtn=document.getElementById('machine-performance-apply-btn');
     const resetBtn=document.getElementById('machine-performance-reset-btn');
     const apply=()=>updateMachinesPerformanceTable();
-    if(input && input.dataset.bound!=='1'){ input.dataset.bound='1'; input.addEventListener('keypress',e=>{if(e.key==='Enter')apply();}); }
-    if(searchBtn && searchBtn.dataset.bound!=='1'){ searchBtn.dataset.bound='1'; searchBtn.addEventListener('click',apply); }
+    const applyTypedMachine=()=>{
+        const typed=String(input ? input.value : '').trim();
+        const exists=(Array.isArray(MACHINES)?MACHINES:[]).some(m=>String(m?.number ?? '').trim()===typed);
+        if(typed && !exists){
+            if(input) input.value='';
+            select.value='';
+            updateMachinesPerformanceTable();
+            const status=document.getElementById('machine-performance-filter-status');
+            if(status) status.textContent=`❌ الماكينة ${typed} غير موجودة في قائمة الماكينات.`;
+            return;
+        }
+        select.value=typed;
+        apply();
+    };
+    if(input && input.dataset.bound!=='1'){ input.dataset.bound='1'; input.addEventListener('keypress',e=>{if(e.key==='Enter')applyTypedMachine();}); }
+    if(searchBtn && searchBtn.dataset.bound!=='1'){ searchBtn.dataset.bound='1'; searchBtn.addEventListener('click',applyTypedMachine); }
     if(applyBtn && applyBtn.dataset.bound!=='1'){ applyBtn.dataset.bound='1'; applyBtn.addEventListener('click',apply); }
     ['machine-performance-date-from','machine-performance-date-to'].forEach(id=>{const el=document.getElementById(id); if(el&&el.dataset.bound!=='1'){el.dataset.bound='1';el.addEventListener('change',apply);}});
     if(resetBtn && resetBtn.dataset.bound!=='1'){ resetBtn.dataset.bound='1'; resetBtn.addEventListener('click',()=>{if(input)input.value='';select.value='';['machine-performance-date-from','machine-performance-date-to'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});apply();}); }
@@ -2925,8 +3037,22 @@ function setupMachinePerformanceFilter() {
     const applyBtn=document.getElementById('machine-performance-apply-btn');
     const resetBtn=document.getElementById('machine-performance-reset-btn');
     const apply=()=>updateMachinesPerformanceTable();
-    if(input && input.dataset.bound!=='1'){ input.dataset.bound='1'; input.addEventListener('keypress',e=>{if(e.key==='Enter')apply();}); }
-    if(searchBtn && searchBtn.dataset.bound!=='1'){ searchBtn.dataset.bound='1'; searchBtn.addEventListener('click',apply); }
+    const applyTypedMachine=()=>{
+        const typed=String(input ? input.value : '').trim();
+        const exists=(Array.isArray(MACHINES)?MACHINES:[]).some(m=>String(m?.number ?? '').trim()===typed);
+        if(typed && !exists){
+            if(input) input.value='';
+            select.value='';
+            updateMachinesPerformanceTable();
+            const status=document.getElementById('machine-performance-filter-status');
+            if(status) status.textContent=`❌ الماكينة ${typed} غير موجودة في قائمة الماكينات.`;
+            return;
+        }
+        select.value=typed;
+        apply();
+    };
+    if(input && input.dataset.bound!=='1'){ input.dataset.bound='1'; input.addEventListener('keypress',e=>{if(e.key==='Enter')applyTypedMachine();}); }
+    if(searchBtn && searchBtn.dataset.bound!=='1'){ searchBtn.dataset.bound='1'; searchBtn.addEventListener('click',applyTypedMachine); }
     if(applyBtn && applyBtn.dataset.bound!=='1'){ applyBtn.dataset.bound='1'; applyBtn.addEventListener('click',apply); }
     ['machine-performance-date-from','machine-performance-date-to'].forEach(id=>{const el=document.getElementById(id); if(el&&el.dataset.bound!=='1'){el.dataset.bound='1';el.addEventListener('change',apply);}});
     if(resetBtn && resetBtn.dataset.bound!=='1'){ resetBtn.dataset.bound='1'; resetBtn.addEventListener('click',()=>{if(input)input.value='';select.value='';['machine-performance-date-from','machine-performance-date-to'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});apply();}); }
