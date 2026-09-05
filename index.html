@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>نظام متابعة أعطال مصنع 5 - شركة ACROW مصر</title>
-    <link rel="stylesheet" href="style.css?v=20260905-v11">
+    <link rel="stylesheet" href="style.css?v=20260905-v13">
     <!-- مكتبة قراءة باركود QR -->
     <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
     <!-- OCR لقراءة رقم الماكينة المكتوب مباشرة بالكاميرا -->
@@ -261,13 +261,24 @@
 
                 <div class="card report-calculation-guide" style="margin:10px 0 15px; background:#f8fafc; border:1px solid #cbd5e1; border-right:5px solid #64748b; padding:12px 15px; border-radius:8px; line-height:1.9;">
                     <h4 style="margin:0 0 6px; color:#334155;">🧮 طريقة حساب النسب في تقرير أداء الماكينات</h4>
-                    <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:6px 18px; color:#475569; font-size:13px;">
-                        <div><strong>نسبة التعطل اليومي:</strong> وقت التوقف المحتسب داخل التشغيل ÷ وقت تشغيل اليوم من الجدول المركزي × 100.</div>
-                        <div><strong>نسبة الوردية الأولى:</strong> توقف الوردية الأولى ÷ وقت تشغيل الوردية الأولى الفعلي × 100.</div>
-                        <div><strong>نسبة الوردية الثانية:</strong> توقف الوردية الثانية ÷ وقت تشغيل الوردية الثانية الفعلي × 100.</div>
-                        <div><strong>النسبة الشهرية:</strong> إجمالي التوقف المحتسب خلال الفترة ÷ إجمالي وقت التشغيل الفعلي للفترة × 100.</div>
+                    <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:10px 18px; color:#475569; font-size:13px;">
+                        <div style="background:#fff;padding:9px;border-radius:7px;border:1px solid #e2e8f0;">
+                            <strong>نسبة الوردية الأولى:</strong> إجمالي توقف الوردية الأولى ÷ (27,000 × عدد أيام الوردية التي ظهر بها عطل) × 100.
+                            <div id="formula-example-shift1" style="margin-top:5px;color:#1e3a8a;"><strong>مثال:</strong> ابحث عن ماكينة لعرض المثال الفعلي.</div>
+                        </div>
+                        <div style="background:#fff;padding:9px;border-radius:7px;border:1px solid #e2e8f0;">
+                            <strong>نسبة الوردية الثانية:</strong> إجمالي توقف الوردية الثانية ÷ (25,200 × عدد أيام الوردية التي ظهر بها عطل) × 100.
+                            <div id="formula-example-shift2" style="margin-top:5px;color:#1e3a8a;"><strong>مثال:</strong> ابحث عن ماكينة لعرض المثال الفعلي.</div>
+                        </div>
+                        <div style="background:#fff;padding:9px;border-radius:7px;border:1px solid #e2e8f0;">
+                            <strong>نسبة التعطل اليومية:</strong> إجمالي التوقف المحتسب للفترة ÷ 52,200 × 100. (المقام لا يتضاعف مع عدد الأيام.)
+                            <div id="formula-example-daily" style="margin-top:5px;color:#1e3a8a;"><strong>مثال:</strong> ابحث عن ماكينة لعرض المثال الفعلي.</div>
+                        </div>
+                        <div style="background:#fff;padding:9px;border-radius:7px;border:1px solid #e2e8f0;">
+                            <strong>النسبة الشهرية:</strong> إجمالي التوقف المحتسب خلال الشهر ÷ إجمالي وقت التشغيل للفترة × 100.
+                            <div id="formula-example-monthly" style="margin-top:5px;color:#1e3a8a;"><strong>مثال:</strong> ابحث عن ماكينة لعرض المثال الفعلي.</div>
+                        </div>
                     </div>
-                    <div style="margin-top:7px; color:#1e3a8a; font-size:12px;"><strong>مثال:</strong> 670 ثانية ÷ 52,200 ثانية × 100 = 1.2835% → <strong>1.3%</strong>. الحساب يتم بالدقة الكاملة، والتقريب للعرض فقط.</div>
                 </div>
 
                 <div class="table-responsive">
@@ -436,6 +447,12 @@
                         <div><code>shift2Downtime</code><span>توقف الوردية الثانية</span></div>
                         <div><code>shift1Operating</code><span>تشغيل الوردية الأولى</span></div>
                         <div><code>shift2Operating</code><span>تشغيل الوردية الثانية</span></div>
+                        <div><code>faultCount</code><span>عدد أعطال كود العطل في Pareto</span></div>
+                        <div><code>totalFaultCount</code><span>إجمالي عدد الأعطال في Pareto</span></div>
+                        <div><code>faultDuration</code><span>مدة توقف كود العطل في Pareto</span></div>
+                        <div><code>totalDuration</code><span>إجمالي وقت التوقف في Pareto</span></div>
+                        <div><code>durationRatio</code><span>نسبة الوقت الحالية في Pareto</span></div>
+                        <div><code>cumulativePrevious</code><span>النسبة التراكمية قبل الصف الحالي</span></div>
                         <div><code>100</code><span>لتحويل الناتج إلى نسبة مئوية</span></div>
                     </div>
                     <p class="formula-help">مثال: <code>downtime / operating * 100</code> أو <code>(downtime / operating) * 100</code>. ويمكنك استخدام <code>×</code> بدل <code>*</code> و<code>÷</code> بدل <code>/</code>.</p>
@@ -488,9 +505,32 @@
                         <small>الافتراضي: <code>shift2Downtime / shift2Operating * 100</code></small>
                     </div>
                     <div class="formula-setting-row">
-                        <label for="formula-monthly">النسبة الشهرية:</label>
+                        <label for="formula-monthly">النسبة الشهرية / الفترة:</label>
                         <input id="formula-monthly" class="form-control formula-input" type="text" dir="ltr" autocomplete="off">
                         <small>الافتراضي: <code>downtime / operating * 100</code></small>
+                    </div>
+                    <div class="formula-setting-row">
+                        <label for="formula-pareto-frequency">Pareto — نسبة التكرار:</label>
+                        <input id="formula-pareto-frequency" class="form-control formula-input" type="text" dir="ltr" autocomplete="off">
+                        <small>الافتراضي: <code>faultCount / totalFaultCount * 100</code></small>
+                    </div>
+                    <div class="formula-setting-row">
+                        <label for="formula-pareto-time">Pareto — نسبة الوقت:</label>
+                        <input id="formula-pareto-time" class="form-control formula-input" type="text" dir="ltr" autocomplete="off">
+                        <small>الافتراضي: <code>faultDuration / totalDuration * 100</code></small>
+                    </div>
+                    <div class="formula-setting-row">
+                        <label for="formula-pareto-cumulative">Pareto — النسبة التراكمية:</label>
+                        <input id="formula-pareto-cumulative" class="form-control formula-input" type="text" dir="ltr" autocomplete="off">
+                        <small>الافتراضي: <code>cumulativePrevious + durationRatio</code></small>
+                    </div>
+                    <div class="formula-setting-row">
+                        <label for="formula-operating-test">اختبار الحساب — النسبة:</label>
+                        <input id="formula-operating-test" class="form-control formula-input" type="text" dir="ltr" autocomplete="off">
+                        <small>الافتراضي: <code>downtime / operating * 100</code></small>
+                    </div>
+                    <div style="margin-top:12px;padding:10px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:7px;color:#1e3a8a;line-height:1.8;font-size:13px;">
+                        🔗 <strong>مصدر موحّد:</strong> كل النسب الموجودة في تقرير أداء الماكينات، اختبار الحساب، وتحليل Pareto يتم أخذ معادلاتها من هذه الصفحة. أي تعديل وحفظ هنا يُطبَّق على كل الشاشات التي تستخدم نفس النسبة.
                     </div>
                     <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:15px;">
                         <button id="save-formula-settings-btn" class="btn btn-success">💾 حفظ المعادلات</button>
@@ -713,6 +753,6 @@
         </table>
     </div>
 
-    <script src="script.js?v=20260905-v11"></script>
+    <script src="script.js?v=20260905-v13"></script>
 </body>
 </html>
