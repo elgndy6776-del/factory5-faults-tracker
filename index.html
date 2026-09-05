@@ -33,6 +33,7 @@
                 <button type="button" class="initial-role-btn" data-role="tech">🛠️ إدارة الصيانة</button>
                 <button type="button" class="initial-role-btn" data-role="leader">👨‍💼 قائد الفريق</button>
                 <button type="button" class="initial-role-btn" data-role="admin">📊 لوحة الإدارة</button>
+                <button type="button" class="initial-role-btn" data-role="topManagement">🏢 Top Management</button>
             </div>
 
             <div id="initial-password-wrap" class="initial-password-wrap hidden">
@@ -181,7 +182,7 @@
         <!-- ================= لوحة الإدارة والتقارير (تظهر بكلمة سر) ================= -->
         <div id="admin-panel" class="admin-panel hidden" style="background: #f8fafc; padding: 20px; border-radius: 8px; border: 2px solid #cbd5e1; margin-top: 20px;">
             <div class="admin-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; border-bottom: 2px solid #e2e8f0; padding-bottom: 10px;">
-                <h2 style="color: #1e293b; margin: 0;">📊 لوحة تحكم الإدارة والتقارير</h2>
+                <h2 id="admin-panel-title" style="color: #1e293b; margin: 0;">📊 لوحة تحكم الإدارة والتقارير</h2>
                 
                 <div style="display: flex; gap: 10px;">
                     <!-- زر العودة للتبويبات الرئيسية داخل لوحة الإدارة -->
@@ -198,7 +199,7 @@
                 <button class="tab-btn" data-tab="tab-machine-management" style="padding: 8px 12px; cursor: pointer;">قائمة الماكينات و QR</button>
                 <button class="tab-btn" data-tab="tab-fault-code-management" style="padding: 8px 12px; cursor: pointer;">إدارة أكواد الأعطال</button>
                 <button class="tab-btn" data-tab="tab-tech-screen-management" style="padding: 8px 12px; cursor: pointer;">إدارة شاشات الفنيين</button>
-                <button class="tab-btn" data-tab="tab-formula-settings" style="padding: 8px 12px; cursor: pointer;">⚙️ إعدادات المعادلات</button>
+                <button class="tab-btn formula-settings-protected-tab" data-tab="tab-formula-settings" style="padding: 8px 12px; cursor: pointer;">⚙️ إعدادات المعادلات 🔒</button>
                 <button class="tab-btn" data-tab="tab-pareto" style="padding: 8px 12px; cursor: pointer;">تحليل Pareto</button>
                 <button class="tab-btn" data-tab="tab-search" style="padding: 8px 12px; cursor: pointer;">بحث متقدم</button>
                 <button class="tab-btn" data-tab="tab-reports" style="padding: 8px 12px; cursor: pointer;">تقارير الطباعة</button>
@@ -207,6 +208,7 @@
 
             <!-- 1. مؤشرات الأداء الكلية -->
             <div id="tab-indicators" class="tab-pane active">
+                <div class="top-print-row"><button type="button" class="btn btn-secondary top-management-print-btn" data-print-tab="tab-indicators">🖨️ طباعة الشاشة</button></div>
                 <h3 style="color: #334155; margin-bottom: 10px;">مؤشرات الأداء العامة لمصنع 5</h3>
                 <div class="kpi-grid">
                     <div class="kpi-card">
@@ -230,6 +232,7 @@
 
             <!-- 2. أداء الماكينات -->
             <div id="tab-machines" class="tab-pane">
+                <div class="top-print-row"><button type="button" class="btn btn-secondary top-management-print-btn" data-print-tab="tab-machines">🖨️ طباعة الشاشة</button></div>
                 <h3 style="color: #334155; margin-bottom: 10px;">تقرير أداء ومعدلات أعطال الماكينات</h3>
                 <div class="form-group" style="margin-bottom: 15px;">
                     <label style="display:block; margin-bottom:5px; color:#334155; font-weight:bold;">🔎 البحث برقم الماكينة:</label>
@@ -263,12 +266,12 @@
                     <h4 style="margin:0 0 6px; color:#334155;">🧮 طريقة حساب النسب في تقرير أداء الماكينات</h4>
                     <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:10px 18px; color:#475569; font-size:13px;">
                         <div style="background:#fff;padding:9px;border-radius:7px;border:1px solid #e2e8f0;">
-                            <strong>نسبة الوردية الأولى:</strong> إجمالي توقف الوردية الأولى ÷ (27,000 × عدد أيام الوردية التي ظهر بها عطل) × 100.
-                            <div id="formula-example-shift1" style="margin-top:5px;color:#1e3a8a;"><strong>مثال:</strong> ابحث عن ماكينة لعرض المثال الفعلي.</div>
+                            <strong>نسبة تعطل الوردية الأولى حتى اليوم الحالي:</strong> إجمالي توقف الوردية الأولى من بداية الشهر/الفترة المحددة حتى اليوم الحالي ÷ (27,000 × عدد أيام الوردية التي ظهر بها عطل) × 100.
+                            <div id="formula-example-shift1-to-date" style="margin-top:5px;color:#1e3a8a;"><strong>مثال:</strong> اختر ماكينة لعرض الحساب الفعلي حتى اليوم.</div>
                         </div>
                         <div style="background:#fff;padding:9px;border-radius:7px;border:1px solid #e2e8f0;">
-                            <strong>نسبة الوردية الثانية:</strong> إجمالي توقف الوردية الثانية ÷ (25,200 × عدد أيام الوردية التي ظهر بها عطل) × 100.
-                            <div id="formula-example-shift2" style="margin-top:5px;color:#1e3a8a;"><strong>مثال:</strong> ابحث عن ماكينة لعرض المثال الفعلي.</div>
+                            <strong>نسبة تعطل الوردية الثانية حتى اليوم الحالي:</strong> إجمالي توقف الوردية الثانية من بداية الشهر/الفترة المحددة حتى اليوم الحالي ÷ (25,200 × عدد أيام الوردية التي ظهر بها عطل) × 100.
+                            <div id="formula-example-shift2-to-date" style="margin-top:5px;color:#1e3a8a;"><strong>مثال:</strong> اختر ماكينة لعرض الحساب الفعلي حتى اليوم.</div>
                         </div>
                         <div style="background:#fff;padding:9px;border-radius:7px;border:1px solid #e2e8f0;">
                             <strong>نسبة التعطل اليومية:</strong> إجمالي التوقف المحتسب للفترة ÷ 52,200 × 100. (المقام لا يتضاعف مع عدد الأيام.)
@@ -432,6 +435,20 @@
             </div>
 
             <!-- إعدادات المعادلات -->
+            <div id="formula-settings-password-modal" style="display:none; position:fixed; inset:0; z-index:99999; background:rgba(15,23,42,.72); align-items:center; justify-content:center; padding:20px;">
+                <div style="width:min(420px,100%); background:#fff; border-radius:14px; padding:24px; box-shadow:0 20px 60px rgba(0,0,0,.3); text-align:center;">
+                    <div style="font-size:42px; margin-bottom:8px;">🔒</div>
+                    <h3 style="margin:0 0 8px; color:#1e293b;">إعدادات معادلات التقارير</h3>
+                    <p style="margin:0 0 16px; color:#64748b;">هذه الصفحة محمية بكلمة مرور.</p>
+                    <input id="formula-settings-password-input" type="password" inputmode="numeric" autocomplete="off" placeholder="أدخل كلمة المرور" style="width:100%; box-sizing:border-box; padding:12px; border:1px solid #cbd5e1; border-radius:8px; text-align:center; font-size:18px; margin-bottom:10px;">
+                    <div id="formula-settings-password-error" style="display:none; color:#dc2626; font-weight:bold; margin-bottom:10px;">كلمة المرور غير صحيحة.</div>
+                    <div style="display:flex; gap:8px; justify-content:center;">
+                        <button id="formula-settings-password-submit" class="btn btn-success" style="min-width:120px;">دخول</button>
+                        <button id="formula-settings-password-cancel" class="btn btn-secondary" style="min-width:120px;">إلغاء</button>
+                    </div>
+                </div>
+            </div>
+
             <div id="tab-formula-settings" class="tab-pane">
                 <h3 style="color:#334155; margin-bottom:10px;">⚙️ إعدادات معادلات التقارير</h3>
                 <p style="color:#475569; line-height:1.8; margin-bottom:15px;">من هنا تقدر تكتب المعادلة بنفسك. النظام يسمح فقط بالأرقام والمتغيرات والعمليات الحسابية، ويتم حفظ الإعدادات ومزامنتها مع Firebase. لا يتم حذف أو تعديل بيانات الأعطال.</p>
@@ -447,6 +464,10 @@
                         <div><code>shift2Downtime</code><span>توقف الوردية الثانية</span></div>
                         <div><code>shift1Operating</code><span>تشغيل الوردية الأولى</span></div>
                         <div><code>shift2Operating</code><span>تشغيل الوردية الثانية</span></div>
+                        <div><code>shift1PeriodDowntime</code><span>توقف الوردية الأولى خلال الفترة حتى التاريخ المحدد</span></div>
+                        <div><code>shift1PeriodOperating</code><span>تشغيل الوردية الأولى خلال الفترة</span></div>
+                        <div><code>shift2PeriodDowntime</code><span>توقف الوردية الثانية خلال الفترة حتى التاريخ المحدد</span></div>
+                        <div><code>shift2PeriodOperating</code><span>تشغيل الوردية الثانية خلال الفترة</span></div>
                         <div><code>faultCount</code><span>عدد أعطال كود العطل في Pareto</span></div>
                         <div><code>totalFaultCount</code><span>إجمالي عدد الأعطال في Pareto</span></div>
                         <div><code>faultDuration</code><span>مدة توقف كود العطل في Pareto</span></div>
@@ -505,6 +526,16 @@
                         <small>الافتراضي: <code>shift2Downtime / shift2Operating * 100</code></small>
                     </div>
                     <div class="formula-setting-row">
+                        <label for="formula-shift1-to-date">نسبة تعطل الوردية الأولى حتى التاريخ المحدد:</label>
+                        <input id="formula-shift1-to-date" class="form-control formula-input" type="text" dir="ltr" autocomplete="off">
+                        <small>الافتراضي: <code>shift1PeriodDowntime / shift1PeriodOperating * 100</code></small>
+                    </div>
+                    <div class="formula-setting-row">
+                        <label for="formula-shift2-to-date">نسبة تعطل الوردية الثانية حتى التاريخ المحدد:</label>
+                        <input id="formula-shift2-to-date" class="form-control formula-input" type="text" dir="ltr" autocomplete="off">
+                        <small>الافتراضي: <code>shift2PeriodDowntime / shift2PeriodOperating * 100</code></small>
+                    </div>
+                    <div class="formula-setting-row">
                         <label for="formula-monthly">النسبة الشهرية / الفترة:</label>
                         <input id="formula-monthly" class="form-control formula-input" type="text" dir="ltr" autocomplete="off">
                         <small>الافتراضي: <code>downtime / operating * 100</code></small>
@@ -542,6 +573,7 @@
 
             <!-- 3. تحليل Pareto -->
             <div id="tab-pareto" class="tab-pane">
+                <div class="top-print-row"><button type="button" class="btn btn-secondary top-management-print-btn" data-print-tab="tab-pareto">🖨️ طباعة الشاشة</button></div>
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
                     <h3 style="color: #334155; margin: 0;">تحليل بيريتو (Pareto Analysis) للأعطال الأكثر تأثيراً</h3>
                     <div>
@@ -581,6 +613,7 @@
 
             <!-- 4. البحث المتقدم -->
             <div id="tab-search" class="tab-pane">
+                <div class="top-print-row"><button type="button" class="btn btn-secondary top-management-print-btn" data-print-tab="tab-search">🖨️ طباعة الشاشة</button></div>
                 <h3 style="color: #334155; margin-bottom: 10px;">البحث المتقدم في الأعطال</h3>
                 <div class="search-filters-grid">
                     <div class="form-group">
