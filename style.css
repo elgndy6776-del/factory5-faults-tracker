@@ -948,3 +948,11 @@ body.factory5-role-leader .view-mode-switcher,
 body.factory5-role-leader #admin-login-btn { display:none !important; }
 body.factory5-role-admin .view-mode-switcher,
 body.factory5-role-admin #admin-login-btn { display:none !important; }
+/* Top Management: نسخة عرض مختصرة من لوحة الإدارة */
+body.factory5-role-topManagement .view-mode-switcher,
+body.factory5-role-topManagement #admin-login-btn { display:none !important; }
+body.factory5-role-topManagement #admin-panel .admin-tabs .tab-btn:not([data-tab="tab-indicators"]):not([data-tab="tab-machines"]):not([data-tab="tab-pareto"]):not([data-tab="tab-search"]),
+body.factory5-role-topManagement #admin-panel .tab-pane:not(#tab-indicators):not(#tab-machines):not(#tab-pareto):not(#tab-search) { display:none !important; }
+body.factory5-role-topManagement #admin-panel { border-right-color:#2563eb; }
+.top-print-row { display:none; text-align:left; margin-bottom:10px; }
+body.factory5-role-topManagement .top-print-row { display:block; }
