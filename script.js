@@ -409,7 +409,11 @@ const DEFAULT_FORMULA_SETTINGS = {
     daily: 'downtime / dailyOperating * 100',
     shift1: 'shift1Downtime / shift1Operating * 100',
     shift2: 'shift2Downtime / shift2Operating * 100',
-    monthly: 'downtime / operating * 100'
+    monthly: 'downtime / operating * 100',
+    paretoFrequency: 'faultCount / totalFaultCount * 100',
+    paretoTime: 'faultDuration / totalDuration * 100',
+    paretoCumulative: 'cumulativePrevious + durationRatio',
+    operatingTest: 'downtime / operating * 100'
 };
 let FORMULA_SETTINGS = { ...DEFAULT_FORMULA_SETTINGS };
 let formulaSettingsSyncReady = false;
@@ -419,12 +423,9 @@ function getStoredFormulaSettings() {
     try {
         const saved = JSON.parse(localStorage.getItem('factory5_formula_settings_backup') || 'null');
         if (saved && typeof saved === 'object') {
-            return {
-                daily: String(saved.daily || DEFAULT_FORMULA_SETTINGS.daily),
-                shift1: String(saved.shift1 || DEFAULT_FORMULA_SETTINGS.shift1),
-                shift2: String(saved.shift2 || DEFAULT_FORMULA_SETTINGS.shift2),
-                monthly: String(saved.monthly || DEFAULT_FORMULA_SETTINGS.monthly)
-            };
+            return Object.fromEntries(Object.keys(DEFAULT_FORMULA_SETTINGS).map(key => [
+                key, String(saved[key] || DEFAULT_FORMULA_SETTINGS[key])
+            ]));
         }
     } catch (_) {}
     return cloneDefaultFormulaSettings();
@@ -433,7 +434,11 @@ function saveFormulaSettingsLocal(settings) {
     localStorage.setItem('factory5_formula_settings_backup', JSON.stringify(settings));
 }
 function populateFormulaSettingsForm() {
-    const map = { daily: 'formula-daily', shift1: 'formula-shift1', shift2: 'formula-shift2', monthly: 'formula-monthly' };
+    const map = {
+        daily: 'formula-daily', shift1: 'formula-shift1', shift2: 'formula-shift2', monthly: 'formula-monthly',
+        paretoFrequency: 'formula-pareto-frequency', paretoTime: 'formula-pareto-time',
+        paretoCumulative: 'formula-pareto-cumulative', operatingTest: 'formula-operating-test'
+    };
     Object.keys(map).forEach(key => {
         const el = document.getElementById(map[key]);
         if (el) el.value = FORMULA_SETTINGS[key] || DEFAULT_FORMULA_SETTINGS[key];
@@ -521,27 +526,38 @@ function setupFormulaSettingsSync() {
     rtdb.ref('factory5_formula_settings').on('value', snap => {
         const value = snap.val();
         if (value && typeof value === 'object') {
-            FORMULA_SETTINGS = {
-                daily: String(value.daily || DEFAULT_FORMULA_SETTINGS.daily),
-                shift1: String(value.shift1 || DEFAULT_FORMULA_SETTINGS.shift1),
-                shift2: String(value.shift2 || DEFAULT_FORMULA_SETTINGS.shift2),
-                monthly: String(value.monthly || DEFAULT_FORMULA_SETTINGS.monthly)
-            };
+            FORMULA_SETTINGS = Object.fromEntries(Object.keys(DEFAULT_FORMULA_SETTINGS).map(key => [
+                key, String(value[key] || DEFAULT_FORMULA_SETTINGS[key])
+            ]));
             saveFormulaSettingsLocal(FORMULA_SETTINGS);
             populateFormulaSettingsForm();
             if (document.getElementById('tab-machines')?.classList.contains('active')) updateMachinesPerformanceTable();
+            if (document.getElementById('tab-pareto')?.classList.contains('active')) updateParetoTable();
         }
     });
 }
 function saveFormulaSettingsFromAdmin() {
-    const ids = { daily: 'formula-daily', shift1: 'formula-shift1', shift2: 'formula-shift2', monthly: 'formula-monthly' };
+    const ids = {
+        daily: 'formula-daily', shift1: 'formula-shift1', shift2: 'formula-shift2', monthly: 'formula-monthly',
+        paretoFrequency: 'formula-pareto-frequency', paretoTime: 'formula-pareto-time',
+        paretoCumulative: 'formula-pareto-cumulative', operatingTest: 'formula-operating-test'
+    };
+    const labels = {
+        daily: 'التعطل اليومية', shift1: 'الوردية الأولى', shift2: 'الوردية الثانية', monthly: 'النسبة الشهرية/الفترة',
+        paretoFrequency: 'تكرار Pareto', paretoTime: 'وقت Pareto', paretoCumulative: 'التراكمية في Pareto', operatingTest: 'اختبار التشغيل'
+    };
+    const validationVariables = {
+        downtime: 10, operating: 100, totalDowntime: 10, dailyOperating: 100, shift1Downtime: 5, shift2Downtime: 5,
+        shift1Operating: 50, shift2Operating: 50, faultCount: 2, totalFaultCount: 10, faultDuration: 20, totalDuration: 100,
+        cumulativePrevious: 10, durationRatio: 20
+    };
     const next = {};
     for (const key of Object.keys(ids)) {
         const el = document.getElementById(ids[key]);
         const expression = normalizeFormulaExpression(el ? el.value : '');
-        if (!expression) { alert(`اكتب معادلة ${key === 'daily' ? 'التعطل اليومية' : key === 'shift1' ? 'الوردية الأولى' : key === 'shift2' ? 'الوردية الثانية' : 'النسبة الشهرية'} أولاً.`); return; }
-        try { evaluateSafeFormula(expression, { downtime: 1, operating: 1, totalDowntime: 1, dailyOperating: 1, shift1Downtime: 1, shift2Downtime: 1, shift1Operating: 1, shift2Operating: 1 }); }
-        catch (err) { alert(`المعادلة غير صحيحة: ${err.message}`); return; }
+        if (!expression) { alert(`اكتب معادلة ${labels[key]} أولاً.`); return; }
+        try { evaluateSafeFormula(expression, validationVariables); }
+        catch (err) { alert(`المعادلة غير صحيحة في ${labels[key]}: ${err.message}`); return; }
         next[key] = expression;
     }
     FORMULA_SETTINGS = next;
@@ -628,13 +644,51 @@ function ensureAlertAudioReady() {
         const AudioCtx = window.AudioContext || window.webkitAudioContext;
         if (!AudioCtx) return false;
         if (!alertAudioContext) alertAudioContext = new AudioCtx();
-        if (alertAudioContext.state === 'suspended') alertAudioContext.resume().catch(() => {});
-        alertAudioReady = alertAudioContext.state === 'running';
+        if (alertAudioContext.state === 'suspended') {
+            const resumeResult = alertAudioContext.resume();
+            if (resumeResult && typeof resumeResult.catch === 'function') resumeResult.catch(() => {});
+        }
+        // لا نعتمد فقط على state مباشرة بعد resume؛ يكفي أن المتصفح قبل محاولة الاستئناف.
+        alertAudioReady = alertAudioContext.state === 'running' || alertAudioContext.state === 'suspended';
         return true;
     } catch (_) {
         return false;
     }
 }
+
+// فتح صلاحية الصوت مرة واحدة على كل جهاز/متصفح بعد أول تفاعل من المستخدم.
+// هذا مهم لأن Chrome/Android/iOS تمنع تشغيل الصوت التلقائي قبل وجود تفاعل.
+let alertAudioUnlocked = false;
+function unlockAlertAudio() {
+    if (alertAudioUnlocked) return;
+    try {
+        const ready = ensureAlertAudioReady();
+        if (!ready) return;
+        const unlock = (key) => {
+            const audio = getUploadedAlertAudio(key);
+            if (!audio) return;
+            try {
+                audio.muted = true;
+                audio.currentTime = 0;
+                const result = audio.play();
+                const finish = () => {
+                    audio.pause();
+                    audio.currentTime = 0;
+                    audio.muted = false;
+                };
+                if (result && typeof result.then === 'function') result.then(finish).catch(() => { audio.muted = false; });
+                else finish();
+            } catch (_) { audio.muted = false; }
+        };
+        unlock('newFault');
+        unlock('leaderReceipt');
+        alertAudioUnlocked = true;
+    } catch (_) {}
+}
+
+['pointerdown', 'touchstart', 'keydown'].forEach(eventName => {
+    document.addEventListener(eventName, unlockAlertAudio, { passive: true, once: false });
+});
 
 function playAlertToneSequence(notes, options = {}) {
     if (!ensureAlertAudioReady() || !alertAudioContext) return;
@@ -702,13 +756,10 @@ function monitorFaultAlerts(nextFaults) {
         return;
     }
 
-    // الجرس لا يعمل إلا عندما تكون شاشة إدارة الصيانة هي الواجهة الحالية.
-    const maintenanceScreenOpen = document.body.classList.contains('factory5-role-tech');
-    if (!maintenanceScreenOpen) {
-        faultAlertStateById = nextState;
-        return;
-    }
-
+    // التنبيه الصوتي مخصص للوحة الفنيين فقط.
+    // المزامنة والبيانات تظل فورية على كل الأجهزة، لكن تشغيل الصوت لا يتم
+    // إلا عندما تكون الصفحة الحالية مفتوحة على لوحة الفنيين.
+    const isTechnicianBoard = document.body.classList.contains('factory5-role-tech');
     let newFaultDetected = false;
     let leaderReceiptDetected = false;
 
@@ -724,6 +775,8 @@ function monitorFaultAlerts(nextFaults) {
 
     faultAlertStateById = nextState;
 
+    // لا يوجد أي صوت في العامل أو قائد الفريق أو لوحة الإدارة.
+    if (!isTechnicianBoard) return;
     if (newFaultDetected) playNewFaultAlert();
     if (leaderReceiptDetected) playLeaderReceiptAlert();
 }
@@ -795,13 +848,20 @@ function applyFirebaseFaultSnapshot(data) {
     renderTeamLeaderDashboard();
     updateLiveFaultDurations();
 
+    // كل التقارير ولوحات الإدارة تقرأ من نفس السجل الموحد الموجود في Firebase.
+    // عند إضافة/تعديل/حذف أي عطل من أي جهاز، نعيد تحديث التبويب المفتوح فورًا،
+    // بما في ذلك البحث المتقدم وسجل الأعطال الكامل وتقرير أداء الماكينات.
     const activeTab = sessionStorage.getItem("factory5_active_tab") || "tab-indicators";
     const adminPanel = document.getElementById("admin-panel");
     if (adminPanel && !adminPanel.classList.contains("hidden")) {
         if (activeTab === "tab-indicators") updateIndicators();
         else if (activeTab === "tab-machines") updateMachinesPerformanceTable();
         else if (activeTab === "tab-machine-management") updateMachineManagementTable();
+        else if (activeTab === "tab-fault-code-management") updateFaultCodesManagementTable();
+        else if (activeTab === "tab-tech-screen-management") renderTechScreenManagementTable();
+        else if (activeTab === "tab-formula-settings") populateFormulaSettingsForm();
         else if (activeTab === "tab-pareto") updateParetoTable();
+        else if (activeTab === "tab-search") applyAdvancedSearch();
         else if (activeTab === "tab-logs") updateFullLogsTable();
     }
 }
@@ -1191,8 +1251,11 @@ window.switchAdminTab = function(tabId) {
     if (tabId === "tab-indicators") updateIndicators();
     else if (tabId === "tab-machines") updateMachinesPerformanceTable();
     else if (tabId === "tab-machine-management") updateMachineManagementTable();
+    else if (tabId === "tab-fault-code-management") updateFaultCodesManagementTable();
+    else if (tabId === "tab-tech-screen-management") renderTechScreenManagementTable();
     else if (tabId === "tab-formula-settings") populateFormulaSettingsForm();
     else if (tabId === "tab-pareto") updateParetoTable();
+    else if (tabId === "tab-search") applyAdvancedSearch();
     else if (tabId === "tab-logs") updateFullLogsTable();
 }
 
@@ -1245,7 +1308,7 @@ function showFactory5Role(role) {
 
 function setupEventListeners() {
     // أول تفاعل للمستخدم يفتح الصوت في المتصفح، حتى يمكن تشغيل الجرس لاحقاً
-    // عند وصول عطل جديد أو استلام قائد الفريق بدون الحاجة لأي Refresh.
+    // عند وصول عطل جديد أو استلام قائد الفريق داخل لوحة الفنيين فقط، بدون الحاجة لأي Refresh.
     document.addEventListener('pointerdown', () => ensureAlertAudioReady(), { passive: true });
     document.addEventListener('keydown', () => ensureAlertAudioReady());
 
@@ -2097,11 +2160,24 @@ window.endFault = function(faultId) {
 };
 
 window.deleteFault = function(faultId) {
-    if (!confirm("هل أنت متأكد من رغبتك في حذف هذا العطل نهائياً؟")) return;
-    let faults = getStoredFaults();
-    faults = faults.filter(f => String(f.id) !== String(faultId));
+    if (!confirm("هل أنت متأكد من رغبتك في حذف هذا العطل نهائياً؟\nسيتم حذفه من سجل الأعطال وجميع التقارير والنتائج على كل الأجهزة.")) return;
+    const key = String(faultId);
+    const faults = getStoredFaults().filter(f => String(f.id) !== key);
+
+    // نحدّث المصدر المحلي فورًا، ثم Firebase هو المصدر الموحد لكل الأجهزة.
     saveStoredFaults(faults);
-    alert("تم حذف العطل بنجاح.");
+
+    // تحديث فوري على نفس الجهاز بدون انتظار دورة Firebase.
+    loadFaultsFromStorage();
+    renderTechDashboard();
+    renderTeamLeaderDashboard();
+    updateIndicators();
+    updateMachinesPerformanceTable();
+    updateParetoTable();
+    if (document.getElementById("search-results-summary") && typeof applyAdvancedSearch === "function") applyAdvancedSearch();
+    updateFullLogsTable();
+
+    alert("تم حذف العطل نهائياً من السجل وجميع التقارير. وسيظهر الحذف تلقائياً على باقي الأجهزة.");
 };
 
 function verifyScreenPassword() {
@@ -2458,7 +2534,7 @@ function runOperatingTimeTest() {
     const inside = Math.min(rawSeconds, counted);
     const outside = Math.max(0, rawSeconds - inside);
     const op = centralOperatingSecondsBetween(start, end);
-    const ratio = op > 0 ? (inside / op) * 100 : 0;
+    const ratio = op > 0 ? calculateReportFormula('operatingTest', { downtime: inside, operating: op, totalDowntime: inside, dailyOperating: op, shift1Downtime: 0, shift2Downtime: 0, shift1Operating: op, shift2Operating: 0 }, (inside / op) * 100) : 0;
     const shiftParts = [1,2].map(sh => getShiftIntervalsForDay(new Date(start), sh).reduce((sum,x)=>sum + centralFaultOperatingSeconds({startTime:start,endTime:end}, x.start, x.end, end),0)).filter(v=>v>0);
     result.innerHTML = `<div style="line-height:2"><div>⏱️ إجمالي مدة العطل: <strong>${formatDuration(rawSeconds,'seconds')}</strong></div><div>🌙 الوقت خارج التشغيل: <strong>${formatDuration(outside,'seconds')}</strong></div><div>🟢 الوقت داخل التشغيل: <strong>${formatDuration(inside,'seconds')}</strong></div><div>🛑 التعطل المحتسب فعليًا: <strong>${formatDuration(counted,'seconds')}</strong></div><div>🕐 الوردية المحتسبة: <strong>${shiftValue ? 'الوردية '+shiftValue : (shiftParts.length===1 ? 'الوردية المطابقة' : shiftParts.length>1 ? 'مقسمة بين الورديات' : 'لا توجد وردية')}</strong></div><div>⚙️ Operating في فترة الاختبار: <strong>${formatDuration(op,'seconds')}</strong></div><div>📊 النسبة الناتجة: <strong>${ratio.toFixed(2)}%</strong></div></div>`;
 }
@@ -2547,9 +2623,13 @@ function calculateMachineDayReportMetrics(dayDate, machineFaults, nowMs = getSyn
     const shift1Total = dayFaults.reduce((sum, f) => sum + getShiftIntervalsForDay(dayDate, 1).reduce((inner, x) => inner + Math.floor(getFaultOperatingSeconds(f, x.start, x.end, nowMs)), 0), 0);
     const shift2Total = dayFaults.reduce((sum, f) => sum + getShiftIntervalsForDay(dayDate, 2).reduce((inner, x) => inner + Math.floor(getFaultOperatingSeconds(f, x.start, x.end, nowMs)), 0), 0);
     const total = shift1Total + shift2Total;
-    const shift1Operating = centralShiftOperatingSeconds(dayDate, 1, nowMs);
-    const shift2Operating = centralShiftOperatingSeconds(dayDate, 2, nowMs);
-    const dailyOperating = shift1Operating + shift2Operating;
+    // نسب التقرير تعتمد على ساعات التشغيل المجدولة الكاملة، وليس الوقت المنقضي حتى لحظة فتح التقرير.
+    // الوردية الأولى = 7.5 ساعات، الوردية الثانية = 7 ساعات، واليوم = 14.5 ساعة.
+    const shift1Operating = 7.5 * 60 * 60; // 27,000 ثانية
+    const shift2Operating = 7 * 60 * 60;   // 25,200 ثانية
+    const dailyOperating = shift1Operating + shift2Operating; // 52,200 ثانية
+    const scheduledDayStart = new Date(dayDate.getFullYear(), dayDate.getMonth(), dayDate.getDate()).getTime();
+    const scheduledDayEnd = scheduledDayStart + 24 * 60 * 60 * 1000;
     const formulaVariables = { downtime: total, operating: dailyOperating, totalDowntime: total, dailyOperating, shift1Downtime: shift1Total, shift2Downtime: shift2Total, shift1Operating, shift2Operating };
     const shift1Ratio = calculateReportFormula('shift1', { ...formulaVariables, downtime: shift1Total, operating: shift1Operating }, shift1Operating > 0 ? (shift1Total / shift1Operating) * 100 : 0);
     const shift2Ratio = calculateReportFormula('shift2', { ...formulaVariables, downtime: shift2Total, operating: shift2Operating }, shift2Operating > 0 ? (shift2Total / shift2Operating) * 100 : 0);
@@ -2947,11 +3027,69 @@ function renderMachineDailyDetails(faults, machineNumber, dateFrom, dateTo, nowM
 }
 
 
+function updateMachineFormulaExamples(machineFaults, selectedMachine, dateFrom, dateTo, nowMs = getSynchronizedNow()) {
+    const set = (id, html) => { const el = document.getElementById(id); if (el) el.innerHTML = html; };
+    if (!selectedMachine) {
+        const msg = '<strong>مثال:</strong> اكتب رقم الماكينة واضغط بحث لعرض الوقت الفعلي والحساب.';
+        set('formula-example-shift1', msg); set('formula-example-shift2', msg); set('formula-example-daily', msg); set('formula-example-monthly', msg);
+        return;
+    }
+
+    const now = getSynchronizedNow();
+    const { from, to } = getDateRangeBounds(dateFrom, dateTo, now);
+    const first = new Date(from); first.setHours(0, 0, 0, 0);
+    const last = new Date(to); last.setHours(0, 0, 0, 0);
+    const periodMetrics = [];
+    for (let day = new Date(first); day <= last; day.setDate(day.getDate() + 1)) {
+        periodMetrics.push(calculateMachineDayReportMetrics(new Date(day), machineFaults, now));
+    }
+
+    const fmt = (seconds) => `${formatDuration(Math.floor(seconds), 'seconds')} (${Math.floor(seconds).toLocaleString('en-US')} ثانية)`;
+    const periodDays = Math.max(1, periodMetrics.length);
+    const shift1 = Math.floor(periodMetrics.reduce((sum, m) => sum + m.shift1Total, 0));
+    const shift2 = Math.floor(periodMetrics.reduce((sum, m) => sum + m.shift2Total, 0));
+    const daily = shift1 + shift2;
+    const shift1Days = periodMetrics.filter(m => m.shift1Total > 0).length;
+    const shift2Days = periodMetrics.filter(m => m.shift2Total > 0).length;
+    const shift1Denominator = periodMetrics.reduce((sum, m) => sum + (m.shift1Total > 0 ? m.shift1Operating : 0), 0);
+    const shift2Denominator = periodMetrics.reduce((sum, m) => sum + (m.shift2Total > 0 ? m.shift2Operating : 0), 0);
+    const dailyDenominator = FACTORY_DAILY_OPERATING_SECONDS;
+    const commonVars = {
+        downtime: daily, operating: dailyDenominator, totalDowntime: daily, dailyOperating: dailyDenominator,
+        shift1Downtime: shift1, shift2Downtime: shift2, shift1Operating: shift1Denominator, shift2Operating: shift2Denominator
+    };
+    const shift1Pct = shift1Denominator > 0 ? calculateReportFormula('shift1', { ...commonVars, downtime: shift1, operating: shift1Denominator }, (shift1 / shift1Denominator) * 100) : 0;
+    const shift2Pct = shift2Denominator > 0 ? calculateReportFormula('shift2', { ...commonVars, downtime: shift2, operating: shift2Denominator }, (shift2 / shift2Denominator) * 100) : 0;
+    const dailyPct = dailyDenominator > 0 ? calculateReportFormula('daily', commonVars, (daily / dailyDenominator) * 100) : 0;
+
+    set('formula-example-shift1', shift1Denominator > 0
+        ? `<strong>مثال فعلي للماكينة ${escapeMachineReportHtml(selectedMachine)}:</strong> توقف الوردية الأولى = ${fmt(shift1)}، وظهرت أعطال الوردية في ${shift1Days} يوم → المعادلة الحالية: <code>${escapeMachineReportHtml(FORMULA_SETTINGS.shift1)}</code> → <strong>${shift1Pct.toFixed(4)}%</strong> → ${shift1Pct.toFixed(1)}%.`
+        : `<strong>مثال فعلي للماكينة ${escapeMachineReportHtml(selectedMachine)}:</strong> لا يوجد توقف مسجل للوردية الأولى في الفترة المحددة.`);
+
+    set('formula-example-shift2', shift2Denominator > 0
+        ? `<strong>مثال فعلي للماكينة ${escapeMachineReportHtml(selectedMachine)}:</strong> توقف الوردية الثانية = ${fmt(shift2)}، وظهرت أعطال الوردية في ${shift2Days} يوم → المعادلة الحالية: <code>${escapeMachineReportHtml(FORMULA_SETTINGS.shift2)}</code> → <strong>${shift2Pct.toFixed(4)}%</strong> → ${shift2Pct.toFixed(1)}%.`
+        : `<strong>مثال فعلي للماكينة ${escapeMachineReportHtml(selectedMachine)}:</strong> لا يوجد توقف مسجل للوردية الثانية في الفترة المحددة.`);
+
+    set('formula-example-daily', `<strong>مثال فعلي للماكينة ${escapeMachineReportHtml(selectedMachine)}:</strong> إجمالي توقف الفترة = ${fmt(daily)}، والمقام اليومي ثابت = 52,200 ثانية → المعادلة الحالية: <code>${escapeMachineReportHtml(FORMULA_SETTINGS.daily)}</code> → <strong>${dailyPct.toFixed(4)}%</strong> → ${dailyPct.toFixed(1)}%.`);
+
+    const monthlyDowntime = sumRecordedFaultDurations(machineFaults, from, to, now);
+    const monthlyOperating = Math.max(0, getOperatingSecondsBetween(from, Math.min(to, now)));
+    const monthlyPct = monthlyOperating > 0 ? calculateReportFormula('monthly', {
+        downtime: monthlyDowntime, operating: monthlyOperating, totalDowntime: monthlyDowntime,
+        dailyOperating: FACTORY_DAILY_OPERATING_SECONDS, shift1Downtime: shift1, shift2Downtime: shift2,
+        shift1Operating: shift1Denominator, shift2Operating: shift2Denominator
+    }, (monthlyDowntime / monthlyOperating) * 100) : 0;
+    set('formula-example-monthly', monthlyOperating > 0
+        ? `<strong>مثال فعلي للماكينة ${escapeMachineReportHtml(selectedMachine)}:</strong> إجمالي توقف الفترة = ${fmt(monthlyDowntime)} ÷ وقت تشغيل الفترة = ${Math.floor(monthlyOperating).toLocaleString('en-US')} ثانية → المعادلة الحالية: <code>${escapeMachineReportHtml(FORMULA_SETTINGS.monthly)}</code> → <strong>${monthlyPct.toFixed(4)}%</strong> → ${monthlyPct.toFixed(1)}%.`
+        : `<strong>مثال فعلي للماكينة ${escapeMachineReportHtml(selectedMachine)}:</strong> لا يوجد وقت تشغيل متاح للفترة المحددة.`);
+}
 function updateMachinesPerformanceTable() {
     updateMachinePerformanceOperatingDisplay();
     const faults=getStoredFaults(), tbody=document.querySelector('#machines-performance-table tbody'); if(!tbody)return;
     setupMachinePerformanceFilter(); populateMachinePerformanceFilter();
     const {selectedMachine,dateFrom,dateTo}=getMachinePerformanceFilters(); const status=document.getElementById('machine-performance-filter-status'); const summary=document.getElementById('machine-performance-summary'); const now=getSynchronizedNow();
+    const selectedFaultsForExamples = selectedMachine ? faults.filter(f => String(f.machineNumber) === String(selectedMachine)) : [];
+    updateMachineFormulaExamples(selectedFaultsForExamples, selectedMachine, dateFrom, dateTo, now);
     if(dateFrom&&dateTo&&dateFrom>dateTo){tbody.innerHTML='<tr><td colspan="10" class="no-data">تاريخ البداية يجب أن يكون قبل أو مساويًا لتاريخ النهاية.</td></tr>';if(status)status.textContent='⚠️ الفترة الزمنية غير صحيحة';if(summary)summary.classList.add('hidden');return;}
     if(selectedMachine&&!MACHINES.some(m=>String(m.number)===selectedMachine)){tbody.innerHTML='<tr><td colspan="10" class="no-data">❌ رقم الماكينة غير موجود في قائمة الماكينات.</td></tr>';if(status)status.textContent=`❌ الماكينة ${selectedMachine} غير موجودة`;if(summary)summary.classList.add('hidden');return;}
 
@@ -2987,27 +3125,32 @@ function updateMachinesPerformanceTable() {
             // إجمالي الفترة يمر عبر محرك التشغيل المركزي: خارج ساعات التشغيل لا يُحتسب.
             total = sumRecordedFaultDurations(all, from, to, now);
 
-            // نسبة التعطل اليومية أعلى التقرير تعتمد على إجمالي وقت التوقف المحتسب
-            // للفترة مقسومًا على زمن تشغيل يوم كامل من جدول التشغيل المركزي.
-            // لا نجمع نسب الأيام ولا نقرّب كل يوم على حدة؛ الحساب يظل بالثواني
-            // ثم يُعرض في النهاية بخانة عشرية. مثال: 670 ÷ 52200 × 100 = 1.2835% → 1.3%.
-            const ratioDay = new Date(from);
-            ratioDay.setHours(0, 0, 0, 0);
-            const ratioDayStart = ratioDay.getTime();
-            const ratioDayEnd = ratioDayStart + 24 * 60 * 60 * 1000;
-            const dailyOperatingForRatio = centralOperatingSecondsBetween(ratioDayStart, ratioDayEnd);
-            const dailyFormulaVariables = {
+            // النسبة اليومية للفترة: إجمالي توقف كل الأيام ÷ 52,200 فقط.
+            // لا نضرب 52,200 في عدد الأيام.
+            const periodDailyOperating = FACTORY_DAILY_OPERATING_SECONDS;
+
+            const periodShift1Downtime = periodMetrics.reduce((sum, m) => sum + m.shift1Total, 0);
+            const periodShift2Downtime = periodMetrics.reduce((sum, m) => sum + m.shift2Total, 0);
+            // للوردية: المقام يعتمد على عدد الأيام التي ظهرت فيها أعطال من نفس الوردية،
+            // كما طلب المستخدم. لو كان هناك عطل وردية أولى يوم 1 ويوم 2 فقط،
+            // يكون المقام 27,000 × 2، وليس 27,000 × 4.
+            const shift1FaultDays = periodMetrics.filter(m => m.shift1Total > 0).length;
+            const shift2FaultDays = periodMetrics.filter(m => m.shift2Total > 0).length;
+            const periodShift1Operating = 27000 * shift1FaultDays;
+            const periodShift2Operating = 25200 * shift2FaultDays;
+
+            const periodFormulaVariables = {
                 downtime: total,
-                operating: dailyOperatingForRatio,
+                operating: periodDailyOperating,
                 totalDowntime: total,
-                dailyOperating: dailyOperatingForRatio,
-                shift1Downtime: 0,
-                shift2Downtime: 0,
-                shift1Operating: dailyOperatingForRatio,
-                shift2Operating: 0
+                dailyOperating: periodDailyOperating,
+                shift1Downtime: periodShift1Downtime,
+                shift2Downtime: periodShift2Downtime,
+                shift1Operating: periodShift1Operating,
+                shift2Operating: periodShift2Operating
             };
-            daily = dailyOperatingForRatio > 0
-                ? calculateReportFormula('daily', dailyFormulaVariables, (total / dailyOperatingForRatio) * 100)
+            daily = periodDailyOperating > 0
+                ? calculateReportFormula('daily', periodFormulaVariables, (total / periodDailyOperating) * 100)
                 : 0;
 
             const periodFaults = periodMetrics.flatMap(m=>m.dayFaults || []);
@@ -3138,46 +3281,137 @@ function applyAdvancedSearch() {
 
 function updateParetoTable() {
     // Pareto يعتمد فقط على سجل الأعطال الحالي بعد الحذف.
+    // مهم: تجميع البيانات مستقل عن معادلات النسب؛ تعطل أي معادلة لا يمنع ظهور الجدول/الرسم.
     const now = getSynchronizedNow();
-    const faults = getStoredFaults().filter(f => f && f.status === "finished" && f.faultCode && (!Number.isFinite(Number(f.startTime)) || isFaultCountedInOperatingHours(f, now)));
+    const allStoredFaults = getStoredFaults();
+    const faults = (Array.isArray(allStoredFaults) ? allStoredFaults : Object.values(allStoredFaults || {}))
+        .filter(f => {
+            if (!f || f.status !== "finished") return false;
+            const code = f.faultCode;
+            if (code === undefined || code === null || String(code).trim() === "") return false;
+            return !Number.isFinite(Number(f.startTime)) || isFaultCountedInOperatingHours(f, now);
+        });
+
     const tbody = document.querySelector("#pareto-table tbody");
     if (!tbody) return;
     tbody.innerHTML = "";
 
-    const totalFaultsCount = faults.length || 1;
-    const totalFaultsDuration = faults.reduce((sum, f) => sum + (Number.isFinite(Number(f.startTime)) ? getFaultOperatingSeconds(f, Number(f.startTime), Number.isFinite(Number(f.endTime)) ? Number(f.endTime) : getSynchronizedNow()) : getFaultDurationSeconds(f)), 0) || 1;
+    const durationOfFault = (f) => {
+        const start = Number(f.startTime);
+        const end = Number(f.endTime);
+        if (Number.isFinite(start)) {
+            // نفس طريقة إجمالي الوقت في البحث المتقدم حرفياً:
+            // نحسب وقت التشغيل المحتسب للعطل ثم نقرّب مدة كل عطل إلى
+            // الثواني الكاملة قبل الجمع، حتى لا تختلف نتيجة الباريتو عن التقرير.
+            const effectiveEnd = Number.isFinite(end) ? end : getSynchronizedNow();
+            return Math.max(0, Math.floor(getCountedDowntimeSeconds(f, start, effectiveEnd, getSynchronizedNow())));
+        }
+        return Math.max(0, Math.floor(getFaultDurationSeconds(f)));
+    };
+
+    const totalFaultsCount = faults.length;
+    const totalFaultsDuration = faults.reduce((sum, f) => sum + durationOfFault(f), 0);
     const paretoMap = {};
 
     faults.forEach(f => {
         const code = String(f.faultCode);
         if (!paretoMap[code]) {
-            const codeInfo = FAULT_CODES.find(fc => String(fc.code) === code);
-            paretoMap[code] = { code: f.faultCode, name: f.faultName || (codeInfo ? codeInfo.name : "عطل غير محدد"), count: 0, duration: 0 };
+            const codeInfo = Array.isArray(FAULT_CODES)
+                ? FAULT_CODES.find(fc => String(fc.code) === code)
+                : null;
+            paretoMap[code] = {
+                code: f.faultCode,
+                name: f.faultName || (codeInfo ? codeInfo.name : "عطل غير محدد"),
+                count: 0,
+                duration: 0
+            };
         }
         paretoMap[code].count += 1;
-        paretoMap[code].duration += (Number.isFinite(Number(f.startTime)) ? getFaultOperatingSeconds(f, Number(f.startTime), Number.isFinite(Number(f.endTime)) ? Number(f.endTime) : getSynchronizedNow()) : getFaultDurationSeconds(f));
+        paretoMap[code].duration += durationOfFault(f);
     });
 
-    const sortedPareto = Object.values(paretoMap).filter(item => item.count > 0).sort((a, b) => b.duration - a.duration || b.count - a.count);
+    const sortedPareto = Object.values(paretoMap)
+        .filter(item => item.count > 0)
+        .sort((a, b) => b.duration - a.duration || b.count - a.count);
+
+    if (!sortedPareto.length) {
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:20px;">لا توجد أعطال مكتملة لعرض تحليل الباريتو.</td></tr>';
+        if (typeof renderParetoChart === "function") {
+            renderParetoChart([], [], []);
+        }
+        return;
+    }
+
+    // نستخدم 1 فقط كقيمة حسابية احتياطية حتى لا يحدث قسمة على صفر،
+    // مع إبقاء عدد الأعطال ومدة الأعطال الحقيقية كما هي.
+    const safeTotalFaultsCount = totalFaultsCount || 1;
+    const safeTotalFaultsDuration = totalFaultsDuration || 1;
+
+    const safeParetoFormula = (formulaKey, variables, fallback) => {
+        try {
+            const result = calculateReportFormula(formulaKey, variables, fallback);
+            return Number.isFinite(Number(result)) ? Number(result) : fallback;
+        } catch (error) {
+            return fallback;
+        }
+    };
+
     let cumulativeDurationPercent = 0;
     const chartLabels = [], chartDurations = [], chartCumulative = [];
 
     sortedPareto.forEach(item => {
-        const countRatio = ((item.count / totalFaultsCount) * 100).toFixed(1);
-        const durationRatio = (item.duration / totalFaultsDuration) * 100;
-        cumulativeDurationPercent += durationRatio;
-        chartLabels.push(`كود ${item.code}: ${item.name}`);
-        chartDurations.push(Number(item.duration.toFixed(3)));
-        chartCumulative.push(Number(cumulativeDurationPercent.toFixed(1)));
+        const fallbackCountRatio = (item.count / safeTotalFaultsCount) * 100;
+        const fallbackDurationRatio = (item.duration / safeTotalFaultsDuration) * 100;
+
+        const baseVars = {
+            faultCount: item.count,
+            totalFaultCount: totalFaultsCount,
+            faultDuration: item.duration,
+            totalDuration: totalFaultsDuration,
+            cumulativePrevious: cumulativeDurationPercent,
+            durationRatio: fallbackDurationRatio,
+            downtime: item.duration,
+            operating: totalFaultsDuration,
+            totalDowntime: totalFaultsDuration,
+            dailyOperating: totalFaultsDuration,
+            shift1Downtime: 0,
+            shift2Downtime: 0,
+            shift1Operating: 0,
+            shift2Operating: 0
+        };
+
+        // النسب نفسها تأخذ المعادلة المركزية، لكن الجدول لا يعتمد عليها في إنشاء الصف.
+        const countRatio = safeParetoFormula("paretoFrequency", baseVars, fallbackCountRatio);
+        const durationRatio = safeParetoFormula("paretoTime", { ...baseVars, durationRatio: fallbackDurationRatio }, fallbackDurationRatio);
+        const nextCumulative = safeParetoFormula(
+            "paretoCumulative",
+            { ...baseVars, cumulativePrevious: cumulativeDurationPercent, durationRatio },
+            cumulativeDurationPercent + durationRatio
+        );
+
+        cumulativeDurationPercent = Math.max(0, Number(nextCumulative) || 0);
+
         const tr = document.createElement("tr");
         tr.innerHTML = `
-            <td>كود ${item.code}</td><td>${item.name}</td><td>${item.count}</td><td>${countRatio}%</td>
-            <td>${formatDuration(item.duration, "seconds")}</td><td>${durationRatio.toFixed(1)}%</td>
-            <td><strong>${cumulativeDurationPercent.toFixed(1)}%</strong></td>`;
+            <td>${item.code}</td>
+            <td>${item.name}</td>
+            <td>${item.count}</td>
+            <td>${Number(countRatio).toFixed(1)}%</td>
+            <td>${formatDuration(item.duration, "seconds")}</td>
+            <td>${Number(durationRatio).toFixed(1)}%</td>
+            <td><strong>${Number(cumulativeDurationPercent).toFixed(1)}%</strong></td>
+        `;
         tbody.appendChild(tr);
+
+        // أسفل الرسم نعرض اسم العطل بدل رقم الكود، مع الحفاظ على الكود داخل الجدول.
+        chartLabels.push(String(item.name || item.code));
+        chartDurations.push(item.duration);
+        chartCumulative.push(cumulativeDurationPercent);
     });
 
-    renderParetoChart(chartLabels, chartDurations, chartCumulative);
+    if (typeof renderParetoChart === "function") {
+        renderParetoChart(chartLabels, chartDurations, chartCumulative);
+    }
 }
 
 function renderParetoChart(labels, durations, cumulative) {
