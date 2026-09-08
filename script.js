@@ -3017,12 +3017,19 @@ function getFaultsForMachineAndRange(faults, machineNumber, dateFrom, dateTo, no
     return faults.filter(f => (!machineNumber || String(f.machineNumber) === String(machineNumber)) && (!(dateFrom || dateTo) || faultIntersectsDateRange(f, from, to)));
 }
 
-// مدة العطل المسجلة فعليًا في سجل الأعطال، بدون استبعاد ساعة الراحة أو ساعات الليل.
-// تستخدمها شاشة تقرير أداء الماكينات عند عرض "إجمالي وقت التوقف" حتى يطابق
-// مجموع مدد الأعطال المسجلة بالدقيقة والثانية حرفيًا.
+// ================================================================
+// المصدر الموحد لوقت التوقف المحتسب في تقرير أداء الماكينات.
+// مهم: لا نحسب مدة العطل الخام هنا. نحسب فقط الجزء الواقع داخل
+// ساعات التشغيل الفعلية في جدول الورديات المركزي، ونستبعد الراحة
+// وأي وقت قبل بداية التشغيل أو بعد نهايته.
+// لذلك:
+// إجمالي توقف اليوم = توقف الوردية الأولى + توقف الوردية الثانية
+// وحد اليوم الأقصى = 7:30 + 7:00 = 14:30.
+// ================================================================
 function getFaultRecordedDurationInRange(fault, rangeFrom, rangeTo, nowMs = getSynchronizedNow()) {
     if (!fault) return 0;
     const start = Number(fault.startTime);
+
     if (Number.isFinite(start)) {
         const rawEnd = Number(fault.endTime);
         const end = Number.isFinite(rawEnd) ? rawEnd : nowMs;
@@ -3030,18 +3037,30 @@ function getFaultRecordedDurationInRange(fault, rangeFrom, rangeTo, nowMs = getS
         const to = Number.isFinite(Number(rangeTo)) ? Number(rangeTo) : nowMs;
         const a = Math.max(start, from);
         const b = Math.min(end, to, nowMs);
-        return b > a ? (b - a) / 1000 : 0;
+
+        // هنا النقطة الأساسية: centralOperatingSecondsBetween يستبعد
+        // ساعة الراحة وأي وقت خارج الورديات تلقائيًا.
+        return b > a ? centralOperatingSecondsBetween(a, b) : 0;
     }
+
+    // توافق مع السجلات القديمة التي لا تحتوي startTime.
+    // لا يمكن توزيعها على الورديات بدقة بدون وقت بداية، لذلك نحتفظ
+    // بقيمتها القديمة بدل حذفها أو تغيير بياناتها.
     const seconds = Number(fault.durationSeconds);
     if (Number.isFinite(seconds) && seconds >= 0) return seconds;
     const minutes = Number(fault.durationMinutes);
     return Number.isFinite(minutes) && minutes >= 0 ? minutes * 60 : 0;
 }
+
 function getFaultDurationInRange(fault, rangeFrom, rangeTo, nowMs = getSynchronizedNow()) {
     return Math.floor(Math.max(0, getFaultRecordedDurationInRange(fault, rangeFrom, rangeTo, nowMs)));
 }
+
 function sumRecordedFaultDurations(faults, rangeFrom, rangeTo, nowMs = getSynchronizedNow()) {
-    return (Array.isArray(faults) ? faults : []).reduce((sum, fault) => sum + getFaultDurationInRange(fault, rangeFrom, rangeTo, nowMs), 0);
+    return (Array.isArray(faults) ? faults : []).reduce(
+        (sum, fault) => sum + getFaultDurationInRange(fault, rangeFrom, rangeTo, nowMs),
+        0
+    );
 }
 
 function populateMachinePerformanceFilter() {
@@ -3219,34 +3238,6 @@ function getFaultsForMachineAndRange(faults, machineNumber, dateFrom, dateTo, no
     return faults.filter(f => (!machineNumber || String(f.machineNumber) === String(machineNumber)) && (!(dateFrom || dateTo) || faultIntersectsDateRange(f, from, to)));
 }
 
-// مدة العطل داخل ساعات التشغيل الفعلية فقط.
-// أي وقت قبل بداية الوردية، أو أثناء الراحة، أو بعد نهاية الوردية،
-// يتم استبعاده تلقائيًا من "إجمالي وقت التوقف" في تقرير أداء الماكينات.
-function getFaultRecordedDurationInRange(fault, rangeFrom, rangeTo, nowMs = getSynchronizedNow()) {
-    if (!fault) return 0;
-    const start = Number(fault.startTime);
-    if (Number.isFinite(start)) {
-        const rawEnd = Number(fault.endTime);
-        const end = Number.isFinite(rawEnd) ? rawEnd : nowMs;
-        const from = Number.isFinite(Number(rangeFrom)) ? Number(rangeFrom) : start;
-        const to = Number.isFinite(Number(rangeTo)) ? Number(rangeTo) : nowMs;
-        const a = Math.max(start, from);
-        const b = Math.min(end, to, nowMs);
-        return b > a ? (b - a) / 1000 : 0;
-    }
-    const seconds = Number(fault.durationSeconds);
-    if (Number.isFinite(seconds) && seconds >= 0) return seconds;
-    const minutes = Number(fault.durationMinutes);
-    return Number.isFinite(minutes) && minutes >= 0 ? minutes * 60 : 0;
-}
-
-function getFaultDurationInRange(fault, rangeFrom, rangeTo, nowMs = getSynchronizedNow()) {
-    return Math.floor(Math.max(0, getFaultRecordedDurationInRange(fault, rangeFrom, rangeTo, nowMs)));
-}
-
-function sumRecordedFaultDurations(faults, rangeFrom, rangeTo, nowMs = getSynchronizedNow()) {
-    return (Array.isArray(faults) ? faults : []).reduce((sum, fault) => sum + getFaultDurationInRange(fault, rangeFrom, rangeTo, nowMs), 0);
-}
 
 function populateMachinePerformanceFilter() {
     const select = document.getElementById('machine-performance-filter');
