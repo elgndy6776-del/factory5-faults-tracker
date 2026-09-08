@@ -956,3 +956,73 @@ body.factory5-role-topManagement #admin-panel .tab-pane:not(#tab-indicators):not
 body.factory5-role-topManagement #admin-panel { border-right-color:#2563eb; }
 .top-print-row { display:none; text-align:left; margin-bottom:10px; }
 body.factory5-role-topManagement .top-print-row { display:block; }
+
+
+/* ================= تعديل أوقات الأعطال من سجل الإدارة ================= */
+.fault-time-edit-modal {
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.68);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 18px;
+    z-index: 2500;
+}
+.fault-time-edit-modal.hidden { display: none !important; }
+.fault-time-edit-card {
+    width: min(560px, 100%);
+    background: #fff;
+    border-radius: 14px;
+    box-shadow: 0 20px 55px rgba(0,0,0,.25);
+    padding: 20px;
+    direction: rtl;
+}
+.fault-time-edit-card h3 {
+    margin: 0 0 8px;
+    color: #1e293b;
+}
+.fault-time-edit-card .edit-fault-meta {
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-right: 4px solid #3b82f6;
+    border-radius: 8px;
+    padding: 10px 12px;
+    margin: 10px 0 15px;
+    line-height: 1.8;
+}
+.fault-time-edit-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+}
+.fault-time-edit-card label {
+    display: block;
+    margin-bottom: 5px;
+    font-weight: 700;
+    color: #334155;
+}
+.fault-time-edit-card input[type="datetime-local"] {
+    width: 100%;
+    padding: 10px;
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    font-size: 16px;
+    direction: ltr;
+}
+.fault-time-edit-card .edit-help {
+    margin: 12px 0 0;
+    color: #64748b;
+    font-size: 12px;
+    line-height: 1.7;
+}
+.fault-time-edit-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 16px;
+}
+.fault-time-edit-actions button { flex: 1; }
+@media (max-width: 600px) {
+    .fault-time-edit-grid { grid-template-columns: 1fr; }
+    .fault-time-edit-card { padding: 15px; }
+}
