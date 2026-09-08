@@ -925,7 +925,9 @@ function setupLiveFaultRefresh() {
 
 function applyFirebaseFaultSnapshot(data) {
     firebaseFaultsSyncReady = true;
-    cachedFaults = data && typeof data === 'object' ? Object.values(data) : [];
+    const incoming = data && typeof data === 'object' ? Object.values(data) : [];
+    // لا نسمح بلقطة Firebase أقدم من تعديل إداري حديث أن تعيد البيانات القديمة.
+    cachedFaults = mergePendingFaultEdits(incoming);
 
     // فحص التغييرات قبل إعادة الرسم حتى يصل التنبيه الصوتي فوراً للشاشة الصحيحة.
     monitorFaultAlerts(cachedFaults);
@@ -939,22 +941,10 @@ function applyFirebaseFaultSnapshot(data) {
     renderTeamLeaderDashboard();
     updateLiveFaultDurations();
 
-    // كل التقارير ولوحات الإدارة تقرأ من نفس السجل الموحد الموجود في Firebase.
-    // عند إضافة/تعديل/حذف أي عطل من أي جهاز، نعيد تحديث التبويب المفتوح فورًا،
-    // بما في ذلك البحث المتقدم وسجل الأعطال الكامل وتقرير أداء الماكينات.
-    const activeTab = sessionStorage.getItem("factory5_active_tab") || "tab-indicators";
-    const adminPanel = document.getElementById("admin-panel");
-    if (adminPanel && !adminPanel.classList.contains("hidden")) {
-        if (activeTab === "tab-indicators") updateIndicators();
-        else if (activeTab === "tab-machines") updateMachinesPerformanceTable();
-        else if (activeTab === "tab-machine-management") updateMachineManagementTable();
-        else if (activeTab === "tab-fault-code-management") updateFaultCodesManagementTable();
-        else if (activeTab === "tab-tech-screen-management") renderTechScreenManagementTable();
-        else if (activeTab === "tab-formula-settings") populateFormulaSettingsForm();
-        else if (activeTab === "tab-pareto") updateParetoTable();
-        else if (activeTab === "tab-search") applyAdvancedSearch();
-        else if (activeTab === "tab-logs") updateFullLogsTable();
-    }
+    // سجل الأعطال الكامل هو المصدر الوحيد لكل الشاشات.
+    // أي تعديل في البداية/النهاية يجب أن ينعكس فورًا في كل التقارير، وليس فقط
+    // في التبويب المفتوح، حتى لا تظل شاشة مخفية محتفظة بحساب قديم.
+    refreshAllFaultViews();
 }
 
 function setupRealtimeSync() {
@@ -1254,18 +1244,53 @@ function populateFaultCodes() {
     });
 }
 
+// ================================================================
+// مصدر أعطال موحّد لكل الشاشات
+// سجل الأعطال الكامل هو المصدر الوحيد. أي تعديل إداري يدخل هنا أولًا،
+// ولقطات Firebase القديمة لا يُسمح لها بإرجاع قيمة أقدم فوق التعديل.
+// ================================================================
+const pendingFaultEdits = new Map();
+
+function mergePendingFaultEdits(list) {
+    const source = Array.isArray(list) ? list : [];
+    const byId = new Map();
+    source.forEach(f => { if (f && f.id != null) byId.set(String(f.id), f); });
+    pendingFaultEdits.forEach((edited, id) => {
+        const current = byId.get(String(id));
+        if (!current || Number(current.startTime) !== Number(edited.startTime) || Number(current.endTime) !== Number(edited.endTime) || String(current.status || '') !== String(edited.status || '')) {
+            byId.set(String(id), edited);
+        } else {
+            // Firebase أصبح مطابقًا للتعديل؛ لا نحتاج للحفاظ على النسخة المؤقتة.
+            pendingFaultEdits.delete(String(id));
+        }
+    });
+    return Array.from(byId.values());
+}
+
 function getStoredFaults() {
-    // المصدر الأساسي هو Firebase، مع نسخة احتياطية محلية حتى لا تضيع البيانات
-    // إذا تم إغلاق الصفحة أو حدث انقطاع مؤقت في الاتصال.
-    // بعد الاتصال بـFirebase يكون هو المصدر الفعلي، حتى لو كانت القائمة فارغة
-    // (وبالتالي الحذف ينعكس فورًا ولا تعود نسخة localStorage القديمة).
-    if (firebaseFaultsSyncReady) return cachedFaults;
+    // بعد الاتصال: Firebase هو المصدر، مع طبقة pending قصيرة العمر تمنع
+    // أي snapshot قديم من الكتابة فوق تعديل تم للتو من سجل الأعطال الكامل.
+    if (firebaseFaultsSyncReady) return mergePendingFaultEdits(cachedFaults);
     try {
         const backup = JSON.parse(localStorage.getItem("factory5_faults_backup") || "[]");
-        return Array.isArray(backup) ? backup : [];
+        return mergePendingFaultEdits(Array.isArray(backup) ? backup : []);
     } catch (_) {
-        return [];
+        return mergePendingFaultEdits([]);
     }
+}
+
+function refreshAllFaultViews() {
+    // كل الشاشات تعيد القراءة من getStoredFaults()، وبالتالي من نفس سجل Firebase.
+    // الاستدعاءات محمية حتى لا تتوقف بقية الشاشات إذا كانت شاشة معينة غير موجودة.
+    try { loadFaultsFromStorage(); } catch (_) {}
+    try { renderTechDashboard(); } catch (_) {}
+    try { renderTeamLeaderDashboard(); } catch (_) {}
+    try { updateLiveFaultDurations(); } catch (_) {}
+    try { updateIndicators(); } catch (_) {}
+    try { updateMachinesPerformanceTable(); } catch (_) {}
+    try { updateParetoTable(); } catch (_) {}
+    try { applyAdvancedSearch(); } catch (_) {}
+    try { updateFullLogsTable(); } catch (_) {}
 }
 
 function saveStoredFaults(faults) {
@@ -1281,6 +1306,60 @@ function saveStoredFaults(faults) {
     });
     if (rtdb) rtdb.ref('factory5_faults').set(faultsObj).catch(() => firebaseRestPut('factory5_faults', faultsObj).catch(() => {}));
     else firebaseRestPut('factory5_faults', faultsObj).catch(() => {});
+}
+
+// حفظ عطل واحد فقط في Firebase.
+// تعديل عطل كامل باستخدام set('factory5_faults') كان يسمح لتبويب قديم بإعادة
+// كتابة نسخة قديمة من السجل فوق التعديل الجديد. لذلك التعديل الإداري يستخدم
+// مسار العطل نفسه، ثم يعيد قراءة القيمة المحفوظة للتأكد أن كل التقارير ستقرأ
+// نفس startTime/endTime.
+async function persistSingleFaultToFirebase(fault) {
+    if (!fault || !fault.id) throw new Error('INVALID_FAULT');
+    const wantedId = String(fault.id);
+
+    // لا نفترض أن مفتاح Firebase هو نفس fault.id. بعض السجلات القديمة
+    // قد تكون محفوظة بمفتاح مختلف (مثل push key أو index)، لذلك نبحث عن
+    // السجل نفسه أولاً ثم نكتب في مفتاحه الحقيقي. بهذه الطريقة لا ينشأ
+    // سجل جديد منفصل ولا تظل التقارير تقرأ النسخة القديمة.
+    if (rtdb) {
+        const root = rtdb.ref('factory5_faults');
+        const snap = await root.once('value');
+        const data = snap.val();
+        let realKey = null;
+        if (data && typeof data === 'object') {
+            for (const k of Object.keys(data)) {
+                const item = data[k];
+                if (item && String(item.id) === wantedId) {
+                    realKey = k;
+                    break;
+                }
+            }
+        }
+        if (realKey === null) {
+            // السجلات الجديدة عادة تستخدم id كمفتاح.
+            if (/[.#$\[\]\/]/.test(wantedId)) throw new Error('INVALID_FAULT_ID');
+            realKey = wantedId;
+        }
+        await root.child(String(realKey)).set(fault);
+        return String(realKey);
+    }
+
+    // REST fallback: اقرأ السجل أولاً لتحديد المفتاح الحقيقي، ثم حدّثه فقط.
+    let realKey = null;
+    try {
+        const data = await firebaseRestGet('factory5_faults');
+        if (data && typeof data === 'object') {
+            for (const k of Object.keys(data)) {
+                if (data[k] && String(data[k].id) === wantedId) { realKey = k; break; }
+            }
+        }
+    } catch (_) {}
+    if (realKey === null) {
+        if (/[.#$\[\]\/]/.test(wantedId)) throw new Error('INVALID_FAULT_ID');
+        realKey = wantedId;
+    }
+    await firebaseRestPut(`factory5_faults/${encodeURIComponent(realKey)}`, fault);
+    return String(realKey);
 }
 
 // حساب مدة العطل بدقة من الطابع الزمني الحقيقي (Date.now) دون تقريب للدقائق.
@@ -1421,6 +1500,45 @@ function showFactory5Role(role) {
     const title = document.getElementById("admin-panel-title");
     if (title) title.textContent = role === "topManagement" ? "🏢 لوحة Top Management — مؤشرات وتقارير عامة" : "📊 لوحة تحكم الإدارة والتقارير";
 }
+
+
+// ================= تصفير سجل الأعطال بالكامل =================
+// يحذف factory5_faults فقط من Firebase؛ لا يلمس الماكينات أو أكواد الأعطال أو الإعدادات.
+window.resetAllFaults = function() {
+    const faults = getStoredFaults();
+    const count = Array.isArray(faults) ? faults.length : 0;
+    if (!count) {
+        alert('لا توجد أعطال في السجل حاليًا.');
+        // تأكيد أن المصدر السحابي أيضًا فارغ إن كان هناك اتصال.
+        saveStoredFaults([]);
+        return;
+    }
+
+    const confirmed = confirm(
+        `⚠️ تحذير مهم\\n\\nسيتم حذف ${count} عطلًا من سجل الأعطال بالكامل.\\n` +
+        `سيتم الحذف من Firebase، وبالتالي يختفي السجل من كل الأجهزة والتقارير.\\n\\n` +
+        `لن يتم حذف الماكينات أو أكواد الأعطال أو إعدادات التشغيل والمعادلات.\\n\\nهل تريد المتابعة؟`
+    );
+    if (!confirmed) return;
+
+    saveStoredFaults([]);
+    // إجبار أي آليات polling احتياطية على التقاط التغيير فورًا.
+    try { liveFaultLastSignature = ''; } catch (_) {}
+    try { restLastFaultSignature = ''; } catch (_) {}
+
+    loadFaultsFromStorage();
+    renderTechDashboard();
+    renderTeamLeaderDashboard();
+    updateIndicators();
+    updateMachinesPerformanceTable();
+    updateParetoTable();
+    if (document.getElementById('search-results-summary') && typeof applyAdvancedSearch === 'function') {
+        applyAdvancedSearch();
+    }
+    updateFullLogsTable();
+
+    alert('✅ تم تصفير سجل الأعطال بالكامل. الماكينات والأكواد والإعدادات لم تتأثر.');
+};
 
 function setupEventListeners() {
     // أول تفاعل للمستخدم يفتح الصوت في المتصفح، حتى يمكن تشغيل الجرس لاحقاً
@@ -1724,6 +1842,9 @@ function setupEventListeners() {
 
     const printReportBtn = document.getElementById("print-report-btn");
     if (printReportBtn) printReportBtn.addEventListener("click", executePrintReport);
+
+    const resetAllFaultsBtn = document.getElementById("reset-all-faults-btn");
+    if (resetAllFaultsBtn) resetAllFaultsBtn.addEventListener("click", resetAllFaults);
 
     const printParetoBtn = document.getElementById("print-pareto-btn");
     if (printParetoBtn) printParetoBtn.addEventListener("click", executePrintPareto);
@@ -2469,26 +2590,13 @@ function isFaultCountedInOperatingHours(fault, nowMs = getSynchronizedNow()) {
 function updateIndicators() {
     const faults = getStoredFaults();
     const now = getSynchronizedNow();
-    // السجلات تظل محفوظة كما هي، لكن مؤشرات الإجمالي تحسب الأعطال التي
-    // وقعت داخل مواعيد التشغيل فقط: 07:30-12:00، 13:00-23:00.
-    const countedFaults = faults.filter(f => isFaultCountedInOperatingHours(f, now));
+    // المؤشرات تعتمد حرفيًا على سجل الأعطال الكامل: عدد السجلات ومدة كل سجل
+    // من startTime/endTime، بدون قص المدة حسب ساعات التشغيل.
+    const countedFaults = Array.isArray(faults) ? faults.filter(Boolean) : [];
     const total = countedFaults.length;
     const active = countedFaults.filter(f => f.status === "active").length;
     const finished = countedFaults.filter(f => f.status === "finished").length;
-    const totalDurationSeconds = countedFaults.reduce((sum, f) => {
-        if (!f) return sum;
-        // المدة المعروضة للإجمالي أيضًا تُحسب من وقت التشغيل فقط،
-        // لذلك لا نضيف ساعات ما قبل الوردية أو ما بعد 23:00.
-        if (Number.isFinite(Number(f.startTime))) {
-            const endRaw = Number(f.endTime);
-            const end = Number.isFinite(endRaw) ? endRaw : now;
-            return sum + Math.floor(Math.max(0, getCountedDowntimeSeconds(f, Number(f.startTime), Math.min(end, now), now)));
-        }
-        if (f.status === "finished" && Number.isFinite(Number(f.durationSeconds))) {
-            return sum + Math.max(0, Math.floor(Number(f.durationSeconds)));
-        }
-        return sum + getFaultDurationSeconds(f, now);
-    }, 0);
+    const totalDurationSeconds = countedFaults.reduce((sum, f) => sum + getFaultDurationSeconds(f, now), 0);
 
     const setEl = (id, val) => { const el = document.getElementById(id); if(el) el.textContent = val; };
     setEl("kpi-total", total);
@@ -2797,23 +2905,30 @@ function getCountedDowntimeSeconds(fault, windowStartMs = 0, windowEndMs = Infin
 function getMachineMonthlyDowntimeSeconds(machineFaults, nowMs = getSynchronizedNow()) {
     const now = new Date(nowMs);
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0).getTime();
-
-    return machineFaults.reduce((sum, fault) => {
-        // السجلات القديمة التي لا تحتوي startTime لا يمكن تقسيمها زمنيًا،
-        // لذلك نحافظ على مدتها كما هي حتى لا تضيع أي بيانات.
-        if (!Number.isFinite(Number(fault.startTime))) {
-            return sum + getFaultDurationSeconds(fault, nowMs);
-        }
-        return sum + getFaultOperatingSeconds(fault, monthStart, nowMs, nowMs);
+    return (Array.isArray(machineFaults) ? machineFaults : []).reduce((sum, fault) => {
+        return sum + getFaultDurationInRange(fault, monthStart, nowMs, nowMs);
     }, 0);
 }
 
-// إجمالي وقت توقف ماكينة خلال اليوم الحالي فقط.
+// إجمالي وقت توقف ماكينة خلال اليوم الحالي فقط، من سجل الأعطال نفسه.
 function getMachineDailyDowntimeSeconds(machineFaults, nowMs = getSynchronizedNow()) {
     const now = new Date(nowMs);
     const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
     const dayEnd = dayStart + 24 * 60 * 60 * 1000;
-    return machineFaults.reduce((sum, fault) => sum + getFaultOperatingSeconds(fault, dayStart, dayEnd, nowMs), 0);
+    return (Array.isArray(machineFaults) ? machineFaults : []).reduce((sum, fault) => sum + getFaultDurationInRange(fault, dayStart, dayEnd, nowMs), 0);
+}
+
+function getFaultRawOverlapSeconds(fault, intervals, nowMs = getSynchronizedNow()) {
+    if (!fault) return 0;
+    const start = Number(fault.startTime);
+    if (!Number.isFinite(start)) return 0;
+    const rawEnd = Number(fault.endTime);
+    const end = Number.isFinite(rawEnd) ? rawEnd : nowMs;
+    return (Array.isArray(intervals) ? intervals : []).reduce((sum, x) => {
+        const a = Math.max(start, Number(x.start));
+        const b = Math.min(end, Number(x.end), nowMs);
+        return sum + (b > a ? (b - a) / 1000 : 0);
+    }, 0);
 }
 
 // حساب موحد لكل مؤشرات اليوم؛ نفس البيانات/الثواني تُستخدم أعلى التقرير وأسفله.
@@ -2823,10 +2938,12 @@ function calculateMachineDayReportMetrics(dayDate, machineFaults, nowMs = getSyn
     const dayEnd = dayStart + 24 * 60 * 60 * 1000;
     const effectiveEnd = Math.min(dayEnd, nowMs);
     if (effectiveEnd <= dayStart) return { dayFaults: [], shift1Total: 0, shift2Total: 0, total: 0, shift1Operating: 0, shift2Operating: 0, dailyOperating: 0, dailyRatio: 0, shift1Ratio: 0, shift2Ratio: 0 };
-    const dayFaults = machineFaults.filter(f => Number.isFinite(Number(f.startTime)) && faultIntersectsDateRange(f, dayStart, dayEnd - 1) && isFaultCountedInOperatingHours(f, nowMs));
-    const shift1Total = dayFaults.reduce((sum, f) => sum + getShiftIntervalsForDay(dayDate, 1).reduce((inner, x) => inner + Math.floor(getFaultOperatingSeconds(f, x.start, x.end, nowMs)), 0), 0);
-    const shift2Total = dayFaults.reduce((sum, f) => sum + getShiftIntervalsForDay(dayDate, 2).reduce((inner, x) => inner + Math.floor(getFaultOperatingSeconds(f, x.start, x.end, nowMs)), 0), 0);
-    const total = shift1Total + shift2Total;
+    const dayFaults = machineFaults.filter(f => faultIntersectsDateRange(f, dayStart, dayEnd - 1));
+    const total = dayFaults.reduce((sum, f) => sum + getFaultDurationInRange(f, dayStart, dayEnd, nowMs), 0);
+    // نسب الوردية تستخدم نفس مدة العطل المسجلة، مع توزيع الجزء المتداخل زمنيًا
+    // على الوردية المناسبة فقط؛ إجمالي العطل نفسه لا يتم قصه.
+    const shift1Total = dayFaults.reduce((sum, f) => sum + getFaultRawOverlapSeconds(f, getShiftIntervalsForDay(dayDate, 1), nowMs), 0);
+    const shift2Total = dayFaults.reduce((sum, f) => sum + getFaultRawOverlapSeconds(f, getShiftIntervalsForDay(dayDate, 2), nowMs), 0);
     // نسب التقرير تعتمد على ساعات التشغيل المجدولة الكاملة، وليس الوقت المنقضي حتى لحظة فتح التقرير.
     // الوردية الأولى = 7.5 ساعات، الوردية الثانية = 7 ساعات، واليوم = 14.5 ساعة.
     const shift1Operating = 7.5 * 60 * 60; // 27,000 ثانية
@@ -2907,11 +3024,14 @@ function getFaultRecordedDurationInRange(fault, rangeFrom, rangeTo, nowMs = getS
     if (!fault) return 0;
     const start = Number(fault.startTime);
     if (Number.isFinite(start)) {
-        const endRaw = Number(fault.endTime);
-        const end = Number.isFinite(endRaw) ? endRaw : nowMs;
-        return getFaultOperatingSeconds(fault, Number(rangeFrom), Number(rangeTo), nowMs);
+        const rawEnd = Number(fault.endTime);
+        const end = Number.isFinite(rawEnd) ? rawEnd : nowMs;
+        const from = Number.isFinite(Number(rangeFrom)) ? Number(rangeFrom) : start;
+        const to = Number.isFinite(Number(rangeTo)) ? Number(rangeTo) : nowMs;
+        const a = Math.max(start, from);
+        const b = Math.min(end, to, nowMs);
+        return b > a ? (b - a) / 1000 : 0;
     }
-    // دعم السجلات القديمة التي لا تحتوي على startTime بدون تعديلها أو حذفها.
     const seconds = Number(fault.durationSeconds);
     if (Number.isFinite(seconds) && seconds >= 0) return seconds;
     const minutes = Number(fault.durationMinutes);
@@ -2990,8 +3110,8 @@ function renderMachineFaultDetailsForDay(dayFaults, dayStart, dayEnd, nowMs) {
     const rows = dayFaults.map((fault, index) => {
         const totalForDay = getFaultDurationInRange(fault, dayStart, dayEnd, nowMs);
         const dayDate = new Date(dayStart);
-        const shift1 = getMachineShiftIntervalsForDay(dayDate, 1).reduce((sum, [a, b]) => sum + getFaultOperatingSeconds(fault, a, b, nowMs), 0);
-        const shift2 = getMachineShiftIntervalsForDay(dayDate, 2).reduce((sum, [a, b]) => sum + getFaultOperatingSeconds(fault, a, b, nowMs), 0);
+        const shift1 = getFaultRawOverlapSeconds(fault, getShiftIntervalsForDay(dayDate, 1), nowMs);
+        const shift2 = getFaultRawOverlapSeconds(fault, getShiftIntervalsForDay(dayDate, 2), nowMs);
 
         const start = Number.isFinite(Number(fault.startTime)) ? new Date(Number(fault.startTime)) : null;
         const endRaw = Number(fault.endTime);
@@ -3036,12 +3156,17 @@ function renderMachineDailyDetails(faults, machineNumber, dateFrom, dateTo, nowM
         const dayNow = Math.min(nowMs, de);
         const metrics = calculateMachineDayReportMetrics(day, relevant, nowMs);
         const dayFaults = metrics.dayFaults || [];
+        // عند تحديد فترة زمنية وعدم تحديد ماكينة، لا نعرض الأيام الفارغة.
+        // نعرض فقط الأيام التي يوجد بها عطل فعلي داخل الفترة/الماكينة المختارة.
+        if (!dayFaults.length) continue;
         const { shift1Total, shift2Total, shift1Ratio, shift2Ratio, dailyRatio } = metrics;
         // إجمالي توقف اليوم هنا يطابق الجزء المحتسب داخل ساعات التشغيل، مثل الإجمالي أعلى التقرير.
         // نسب التعطل والوردية تظل محسوبة على زمن التشغيل فقط حسب المعادلات المعتمدة.
         const total = dayFaults.reduce((sum, fault) => sum + getFaultDurationInRange(fault, ds, de, nowMs), 0);
 
         const count = dayFaults.length;
+        // عند اختيار فترة، اعرض الأيام التي بها أعطال فقط، بدون صفوف فارغة.
+        if ((dateFrom || dateTo) && count === 0) continue;
         const detailsHtml = renderMachineFaultDetailsForDay(dayFaults, ds, de, nowMs);
         const tr = document.createElement('tr');
         tr.innerHTML = `
@@ -3099,15 +3224,16 @@ function getFaultsForMachineAndRange(faults, machineNumber, dateFrom, dateTo, no
 // يتم استبعاده تلقائيًا من "إجمالي وقت التوقف" في تقرير أداء الماكينات.
 function getFaultRecordedDurationInRange(fault, rangeFrom, rangeTo, nowMs = getSynchronizedNow()) {
     if (!fault) return 0;
-
     const start = Number(fault.startTime);
     if (Number.isFinite(start)) {
-        // مهم: تقارير أداء الماكينات لا تستخدم المدة الخام للعطل.
-        // يتم احتساب الجزء المتداخل مع جدول التشغيل المركزي فقط.
-        return centralFaultOperatingSeconds(fault, Number(rangeFrom), Number(rangeTo), nowMs);
+        const rawEnd = Number(fault.endTime);
+        const end = Number.isFinite(rawEnd) ? rawEnd : nowMs;
+        const from = Number.isFinite(Number(rangeFrom)) ? Number(rangeFrom) : start;
+        const to = Number.isFinite(Number(rangeTo)) ? Number(rangeTo) : nowMs;
+        const a = Math.max(start, from);
+        const b = Math.min(end, to, nowMs);
+        return b > a ? (b - a) / 1000 : 0;
     }
-
-    // دعم السجلات القديمة التي لا تحتوي على startTime.
     const seconds = Number(fault.durationSeconds);
     if (Number.isFinite(seconds) && seconds >= 0) return seconds;
     const minutes = Number(fault.durationMinutes);
@@ -3188,8 +3314,8 @@ function renderMachineFaultDetailsForDay(dayFaults, dayStart, dayEnd, nowMs) {
     const rows = dayFaults.map((fault, index) => {
         const totalForDay = getFaultDurationInRange(fault, dayStart, dayEnd, nowMs);
         const dayDate = new Date(dayStart);
-        const shift1 = getMachineShiftIntervalsForDay(dayDate, 1).reduce((sum, [a, b]) => sum + getFaultOperatingSeconds(fault, a, b, nowMs), 0);
-        const shift2 = getMachineShiftIntervalsForDay(dayDate, 2).reduce((sum, [a, b]) => sum + getFaultOperatingSeconds(fault, a, b, nowMs), 0);
+        const shift1 = getFaultRawOverlapSeconds(fault, getShiftIntervalsForDay(dayDate, 1), nowMs);
+        const shift2 = getFaultRawOverlapSeconds(fault, getShiftIntervalsForDay(dayDate, 2), nowMs);
 
         const start = Number.isFinite(Number(fault.startTime)) ? new Date(Number(fault.startTime)) : null;
         const endRaw = Number(fault.endTime);
@@ -3240,6 +3366,7 @@ function renderMachineDailyDetails(faults, machineNumber, dateFrom, dateTo, nowM
         const total = dayFaults.reduce((sum, fault) => sum + getFaultDurationInRange(fault, ds, de, nowMs), 0);
 
         const count = dayFaults.length;
+        if ((dateFrom || dateTo) && count === 0) continue;
         const detailsHtml = renderMachineFaultDetailsForDay(dayFaults, ds, de, nowMs);
         const tr = document.createElement('tr');
         tr.innerHTML = `
@@ -3366,7 +3493,15 @@ function updateMachinesPerformanceTable() {
     if(selectedMachine&&!MACHINES.some(m=>String(m.number)===selectedMachine)){tbody.innerHTML='<tr><td colspan="10" class="no-data">❌ رقم الماكينة غير موجود في قائمة الماكينات.</td></tr>';if(status)status.textContent=`❌ الماكينة ${selectedMachine} غير موجودة`;if(summary)summary.classList.add('hidden');return;}
 
     const {from,to}=getDateRangeBounds(dateFrom,dateTo,now); tbody.innerHTML='';
-    const machines=selectedMachine?MACHINES.filter(m=>String(m.number)===selectedMachine):MACHINES;
+    const hasDateRange = !!(dateFrom || dateTo);
+    // عند تحديد فترة زمنية بدون ماكينة، اعرض فقط الماكينات التي لديها عطل فعلي داخل الفترة المحددة.
+    const machines=selectedMachine
+        ? MACHINES.filter(m=>String(m.number)===selectedMachine)
+        : (hasDateRange
+            ? MACHINES.filter(m => getFaultsForMachineAndRange(faults, m.number, dateFrom, dateTo, now).length > 0)
+            : MACHINES);
+
+    let aggregateDowntime = 0;
 
     // في حالة اختيار فترة متعددة الأيام، نحسب مؤشرات اليوم يومًا بيوم ثم نجمعها.
     // لذلك "نسبة التعطل اليومي" أعلى التقرير = مجموع نسب الأيام الظاهرة أسفله،
@@ -3404,15 +3539,15 @@ function updateMachinesPerformanceTable() {
 
         let total, count, avg, max, daily;
         const isSingleDay = !!(dateFrom && dateTo && dateFrom === dateTo);
-        const hasDateRange = !!(dateFrom || dateTo);
 
         if (hasDateRange) {
             const periodMetrics = getPeriodDayMetrics(all);
             // إجمالي الفترة يمر عبر محرك التشغيل المركزي: خارج ساعات التشغيل لا يُحتسب.
             total = sumRecordedFaultDurations(all, from, to, now);
 
-            // النسبة اليومية للفترة: إجمالي توقف كل الأيام ÷ 52,200 فقط.
-            // لا نضرب 52,200 في عدد الأيام.
+            // النسبة اليومية للفترة = متوسط النسب اليومية الفعلية داخل الأيام المحددة.
+            // لا نقسم إجمالي توقف عدة أيام على يوم تشغيل واحد؛ فهذا كان يجعل
+            // نسبة الصف أعلى من النسبة اليومية الظاهرة في تفاصيل الأيام.
             const periodDailyOperating = FACTORY_DAILY_OPERATING_SECONDS;
 
             const periodShift1Downtime = periodMetrics.reduce((sum, m) => sum + m.shift1Total, 0);
@@ -3435,16 +3570,20 @@ function updateMachinesPerformanceTable() {
                 shift1Operating: periodShift1Operating,
                 shift2Operating: periodShift2Operating
             };
-            daily = periodDailyOperating > 0
-                ? calculateReportFormula('daily', periodFormulaVariables, (total / periodDailyOperating) * 100)
+            const daysInPeriod = periodMetrics.length;
+            const dailyRatioSumForMachine = periodMetrics.reduce((sum, m) => sum + (Number(m.dailyRatio) || 0), 0);
+            const fallbackDailyAverage = daysInPeriod > 0 ? dailyRatioSumForMachine / daysInPeriod : 0;
+            daily = daysInPeriod > 0
+                ? calculateReportFormula('daily', { ...periodFormulaVariables, downtime: total, operating: periodDailyOperating * daysInPeriod, dailyOperating: periodDailyOperating * daysInPeriod }, fallbackDailyAverage)
                 : 0;
+
+            aggregateDowntime += Number(total) || 0;
+            // النسبة اليومية الإجمالية تشمل كل الماكينات الظاهرة وكل أيام الفترة؛
+            // اليوم الذي لا يوجد فيه عطل لماكينة معينة يساهم بنسبة 0% لهذه الماكينة.
 
             const periodFaults = periodMetrics.flatMap(m=>m.dayFaults || []);
             count = periodFaults.length;
-            const durations = periodMetrics.flatMap(m => (m.dayFaults || []).map(f => getFaultOperatingSeconds(f,
-                new Date(new Date(Number(f.startTime)).getFullYear(), new Date(Number(f.startTime)).getMonth(), new Date(Number(f.startTime)).getDate()).getTime(),
-                new Date(new Date(Number(f.startTime)).getFullYear(), new Date(Number(f.startTime)).getMonth(), new Date(Number(f.startTime)).getDate()+1).getTime(), now
-            )));
+            const durations = periodMetrics.flatMap(m => (m.dayFaults || []).map(f => getFaultDurationInRange(f, from, to, now)));
             avg = count ? total / count : 0;
             max = durations.length ? Math.max(...durations) : 0;
         } else {
@@ -3453,9 +3592,7 @@ function updateMachinesPerformanceTable() {
             total = sumRecordedFaultDurations(all, from, to, now);
             count = dayMetrics.dayFaults.length + legacy.length;
             avg = count ? total / count : 0;
-            const durations = dayMetrics.dayFaults.map(f=>getFaultOperatingSeconds(f,
-                new Date(new Date(now).getFullYear(), new Date(now).getMonth(), new Date(now).getDate()).getTime(),
-                new Date(new Date(now).getFullYear(), new Date(now).getMonth(), new Date(now).getDate()+1).getTime(), now));
+            const durations = dayMetrics.dayFaults.map(f=>getFaultDurationInRange(f, from, to, now));
             if (legacy.length) durations.push(...legacy.map(f=>getFaultDurationSeconds(f,now)));
             max = durations.length ? Math.max(...durations) : 0;
             daily = dayMetrics.dailyRatio;
@@ -3475,6 +3612,10 @@ function updateMachinesPerformanceTable() {
             monthly=calculateMonthlyStopRatio(all,now);
         }
 
+        if (!hasDateRange) {
+            aggregateDowntime += Number(total) || 0;
+        }
+
         const tr=document.createElement('tr'); tr.innerHTML=`<td>${machine.number}</td><td>${machine.stage}</td><td>${machine.zone}</td><td>${machine.section}</td><td>${count}</td><td>${formatDuration(total,'seconds')}</td><td>${formatDuration(avg,'seconds')}</td><td>${formatDuration(max,'seconds')}</td><td>${daily.toFixed(1)}%</td><td>${monthly.toFixed(1)}%</td>`; tbody.appendChild(tr);
     });
 
@@ -3488,7 +3629,17 @@ function updateMachinesPerformanceTable() {
     } else {
         summaryTotal = sumRecordedFaultDurations(selectedAll, from, to, now);
     }
-    if(summary&&(selectedMachine||dateFrom||dateTo)){summary.innerHTML=`<div class="summary-grid"><div>🔧 الماكينة: ${selectedMachine||'كل الماكينات'}</div><div>📅 الفترة: ${dateFrom||'اليوم'} → ${dateTo||'اليوم'}</div><div>🛑 عدد الأعطال: ${getFaultsForMachineAndRange(faults,selectedMachine,dateFrom,dateTo,now).length}</div><div>⏱️ إجمالي التوقف: ${formatDuration(summaryTotal,'seconds')}</div></div>`;summary.classList.remove('hidden');}else if(summary)summary.classList.add('hidden');
+    const visibleMachineCount = machines.length;
+    if(summary&&(selectedMachine||dateFrom||dateTo)){
+        const rangeCount = machines.reduce((sum,m)=>sum + getFaultsForMachineAndRange(faults,m.number,dateFrom,dateTo,now).length,0);
+        summary.innerHTML=`<div class="summary-grid">
+            <div>🔧 الماكينات الظاهرة: <strong>${visibleMachineCount}</strong></div>
+            <div>📅 الفترة: ${dateFrom||'اليوم'} → ${dateTo||'اليوم'}</div>
+            <div>🛑 إجمالي الأعطال: <strong>${rangeCount}</strong></div>
+            <div>⏱️ إجمالي التوقف: <strong>${formatDuration(aggregateDowntime,'seconds')}</strong></div>
+        </div>`;
+        summary.classList.remove('hidden');
+    }else if(summary)summary.classList.add('hidden');
     if(status){status.textContent=`✅ ${selectedMachine?`الماكينة ${selectedMachine}`:'كل الماكينات'}${dateFrom||dateTo?` | من ${dateFrom||'البداية'} إلى ${dateTo||'اليوم'}`:''}`;status.style.color='#16a34a';}
     renderMachineDailyDetails(faults,selectedMachine,dateFrom,dateTo,now);
 }
@@ -3498,17 +3649,22 @@ function applyAdvancedSearch() {
     const dateFrom = document.getElementById("date-from").value;
     const dateTo = document.getElementById("date-to").value;
     const faults = getStoredFaults();
+    const now = getSynchronizedNow();
+
+    const localDateKey = (timestamp) => {
+        const d = new Date(Number(timestamp));
+        if (!Number.isFinite(d.getTime())) return '';
+        const pad = n => String(n).padStart(2, '0');
+        return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+    };
 
     const filtered = faults.filter(f => {
-        // البحث هنا مقصود يكون دقيقًا برقم الماكينة أو كود العطل فقط.
-        // مثال: البحث عن 5 يعرض كود العطل 5 فقط، وليس 13 أو 1 أو أي نص يحتوي الرقم 5.
-        // والبحث عن رقم ماكينة يعرض أعطال هذه الماكينة فقط.
         const machineNumber = String(f.machineNumber ?? '').trim().toLowerCase();
         const faultCode = String(f.faultCode ?? '').trim().toLowerCase();
         const matchQuery = !query || machineNumber === query || faultCode === query;
         let matchDate = true;
         if (f.startTime) {
-            const fDate = new Date(f.startTime).toISOString().split('T')[0];
+            const fDate = localDateKey(f.startTime);
             if (dateFrom && fDate < dateFrom) matchDate = false;
             if (dateTo && fDate > dateTo) matchDate = false;
         }
@@ -3517,23 +3673,11 @@ function applyAdvancedSearch() {
 
     const count = filtered.length;
     const finished = filtered.filter(f => f.status === "finished").length;
-    const active = filtered.filter(f => f.status === "active").length;
-    // مهم: البحث المتقدم يجب أن يستخدم نفس قاعدة حساب التوقف الموجودة في
-    // تقرير أداء الماكينات: وقت التشغيل الفعلي فقط، وليس durationSeconds الخام
-    // للسجلات المغلقة. هذا يمنع اختلاف الإجمالي/المتوسط عند البحث بكود العطل.
-    const totalDuration = filtered.reduce((sum, f) => {
-        if (!f) return sum;
-        if (Number.isFinite(Number(f.startTime))) {
-            const endRaw = Number(f.endTime);
-            const end = Number.isFinite(endRaw) ? endRaw : getSynchronizedNow();
-            return sum + Math.floor(Math.max(0, getCountedDowntimeSeconds(f, Number(f.startTime), end, getSynchronizedNow())));
-        }
-        // للسجلات القديمة التي لا تحتوي على startTime نحتفظ بالمدة المسجلة.
-        if (Number.isFinite(Number(f.durationSeconds))) {
-            return sum + Math.max(0, Math.floor(Number(f.durationSeconds)));
-        }
-        return sum + getFaultDurationSeconds(f);
-    }, 0);
+    const active = filtered.filter(f => f.status === "active" || f.status === "awaiting_leader_receipt").length;
+    // الوقت هنا هو نفس الوقت الموجود في سجل الأعطال الكامل بالثواني.
+    const durationOf = f => getFaultDurationSeconds(f, now);
+    const totalDuration = filtered.reduce((sum, f) => sum + durationOf(f), 0);
+    const maxDuration = count ? Math.max(...filtered.map(durationOf)) : 0;
 
     const setEl = (id, val) => { const el = document.getElementById(id); if(el) el.textContent = val; };
     setEl("res-count", count);
@@ -3541,11 +3685,12 @@ function applyAdvancedSearch() {
     setEl("res-active", active);
     setEl("res-total-duration", formatDuration(totalDuration, "seconds"));
     setEl("res-avg-duration", formatDuration(count > 0 ? totalDuration / count : 0, "seconds"));
-    setEl("res-max-duration", formatDuration(count > 0 ? Math.max(...filtered.map(f => Number.isFinite(Number(f.startTime)) ? getFaultOperatingSeconds(f, Number(f.startTime), Number.isFinite(Number(f.endTime)) ? Number(f.endTime) : getSynchronizedNow()) : getFaultDurationSeconds(f))) : 0, "seconds"));
-    
-    document.getElementById("search-results-summary").classList.remove("hidden");
+    setEl("res-max-duration", formatDuration(maxDuration, "seconds"));
 
+    const summary = document.getElementById("search-results-summary");
+    if (summary) summary.classList.remove("hidden");
     const tbody = document.querySelector("#adv-search-table tbody");
+    if (!tbody) return;
     tbody.innerHTML = "";
     if (filtered.length === 0) {
         tbody.innerHTML = '<tr><td colspan="6" class="no-data">لا توجد نتائج مطابقة.</td></tr>';
@@ -3553,13 +3698,14 @@ function applyAdvancedSearch() {
     }
     filtered.forEach(f => {
         const tr = document.createElement("tr");
+        const duration = durationOf(f);
         tr.innerHTML = `
             <td>${f.machineNumber || '-'} (${f.machineStage || '-'})</td>
             <td>${f.machineSection || '-'}</td>
             <td>كود ${f.faultCode || '-'} — ${f.faultName || '-'}</td>
             <td>${f.startTime ? new Date(f.startTime).toLocaleString("ar-EG") : '-'}</td>
             <td>${f.endTime ? new Date(f.endTime).toLocaleTimeString("ar-EG") : "مفتوح"}</td>
-            <td>${f.status === "finished" ? formatDuration(Number.isFinite(Number(f.startTime)) ? getFaultOperatingSeconds(f, Number(f.startTime), Number.isFinite(Number(f.endTime)) ? Number(f.endTime) : getSynchronizedNow()) : getFaultDurationSeconds(f), "seconds") : "-"}</td>
+            <td>${formatDuration(duration, "seconds")}</td>
         `;
         tbody.appendChild(tr);
     });
@@ -3572,10 +3718,12 @@ function updateParetoTable() {
     const allStoredFaults = getStoredFaults();
     const faults = (Array.isArray(allStoredFaults) ? allStoredFaults : Object.values(allStoredFaults || {}))
         .filter(f => {
-            if (!f || f.status !== "finished") return false;
+            // الباريتو يعتمد على كل الأعطال المسجلة: المكتمل + العطل المفتوح.
+            // العطل المفتوح يحسب من وقت البداية حتى الآن.
+            if (!f || !["finished", "active", "awaiting_leader_receipt"].includes(f.status)) return false;
             const code = f.faultCode;
             if (code === undefined || code === null || String(code).trim() === "") return false;
-            return !Number.isFinite(Number(f.startTime)) || isFaultCountedInOperatingHours(f, now);
+            return true;
         });
 
     const tbody = document.querySelector("#pareto-table tbody");
@@ -3586,11 +3734,8 @@ function updateParetoTable() {
         const start = Number(f.startTime);
         const end = Number(f.endTime);
         if (Number.isFinite(start)) {
-            // نفس طريقة إجمالي الوقت في البحث المتقدم حرفياً:
-            // نحسب وقت التشغيل المحتسب للعطل ثم نقرّب مدة كل عطل إلى
-            // الثواني الكاملة قبل الجمع، حتى لا تختلف نتيجة الباريتو عن التقرير.
             const effectiveEnd = Number.isFinite(end) ? end : getSynchronizedNow();
-            return Math.max(0, Math.floor(getCountedDowntimeSeconds(f, start, effectiveEnd, getSynchronizedNow())));
+            return Math.max(0, Math.floor(getFaultDurationSeconds(f, getSynchronizedNow())));
         }
         return Math.max(0, Math.floor(getFaultDurationSeconds(f)));
     };
@@ -3621,7 +3766,7 @@ function updateParetoTable() {
         .sort((a, b) => b.duration - a.duration || b.count - a.count);
 
     if (!sortedPareto.length) {
-        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:20px;">لا توجد أعطال مكتملة لعرض تحليل الباريتو.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:20px;">لا توجد أعطال لعرض تحليل الباريتو.</td></tr>';
         if (typeof renderParetoChart === "function") {
             renderParetoChart([], [], []);
         }
@@ -3794,6 +3939,211 @@ function executePrintPareto() {
     setTimeout(() => { printWindow.print(); }, 300);
 }
 
+
+// ================= تعديل وقت بداية/نهاية العطل من سجل الإدارة =================
+// يتم حفظ startTime/endTime في نفس سجل Firebase؛ لذلك كل التقارير والنسب والبحث
+// وشاشات الفنيين تقرأ الوقت الجديد تلقائيًا من نفس المصدر الموحد.
+function formatDateTimeLocalInput(timestamp) {
+    if (!Number.isFinite(Number(timestamp))) return '';
+    const d = new Date(Number(timestamp));
+    const pad = n => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+function parseDateTimeLocalInput(value) {
+    if (!value) return NaN;
+    const m = String(value).match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/);
+    if (!m) return NaN;
+    const seconds = m[6] ? Number(m[6]) : 0;
+    const d = new Date(
+        Number(m[1]), Number(m[2]) - 1, Number(m[3]),
+        Number(m[4]), Number(m[5]), seconds, 0
+    );
+    // رفض التواريخ غير الحقيقية مثل 31/02 بدل تحويلها تلقائيًا إلى شهر آخر.
+    if (d.getFullYear() !== Number(m[1]) || d.getMonth() !== Number(m[2]) - 1 || d.getDate() !== Number(m[3]) || d.getHours() !== Number(m[4]) || d.getMinutes() !== Number(m[5]) || d.getSeconds() !== seconds) return NaN;
+    return d.getTime();
+}
+
+function ensureFaultTimeEditModal() {
+    let modal = document.getElementById('fault-time-edit-modal');
+    if (modal) return modal;
+
+    modal = document.createElement('div');
+    modal.id = 'fault-time-edit-modal';
+    modal.className = 'fault-time-edit-modal hidden';
+    modal.innerHTML = `
+        <div class="fault-time-edit-card" role="dialog" aria-modal="true" aria-labelledby="fault-time-edit-title">
+            <h3 id="fault-time-edit-title">✏️ تعديل وقت العطل</h3>
+            <div id="fault-time-edit-meta" class="edit-fault-meta"></div>
+            <div class="fault-time-edit-grid">
+                <div>
+                    <label for="fault-edit-start">وقت البداية</label>
+                    <input id="fault-edit-start" type="datetime-local" step="1">
+                </div>
+                <div>
+                    <label for="fault-edit-end">وقت النهاية</label>
+                    <input id="fault-edit-end" type="datetime-local" step="1">
+                </div>
+            </div>
+            <p class="edit-help">
+                يمكنك تصحيح البداية والنهاية إذا تم التسجيل متأخرًا أو نُسي إنهاء العطل.
+                ترك النهاية فارغة يُبقي العطل مفتوحًا. عند إدخال نهاية لعطل مفتوح يتم إغلاقه
+                إداريًا وتصبح حالته «تم الإصلاح» حتى تدخل المدة الجديدة في كل الحسابات.
+            </p>
+            <div id="fault-time-edit-error" style="display:none;color:#b91c1c;font-weight:700;margin-top:10px;"></div>
+            <div class="fault-time-edit-actions">
+                <button id="fault-time-edit-save" class="btn btn-success" type="button">💾 حفظ التعديل</button>
+                <button id="fault-time-edit-cancel" class="btn btn-secondary" type="button">إلغاء</button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(modal);
+
+    const close = () => modal.classList.add('hidden');
+    document.getElementById('fault-time-edit-cancel').addEventListener('click', close);
+    modal.addEventListener('click', e => { if (e.target === modal) close(); });
+    document.addEventListener('keydown', e => {
+        if (e.key === 'Escape' && !modal.classList.contains('hidden')) close();
+    });
+
+    return modal;
+}
+
+window.editFaultTimes = function(faultId) {
+    const key = String(faultId);
+    const faults = getStoredFaults();
+    const fault = faults.find(f => String(f.id) === key);
+    if (!fault) {
+        alert('العطل غير موجود أو تم حذفه بالفعل.');
+        return;
+    }
+
+    const modal = ensureFaultTimeEditModal();
+    const startInput = document.getElementById('fault-edit-start');
+    const endInput = document.getElementById('fault-edit-end');
+    const meta = document.getElementById('fault-time-edit-meta');
+    const error = document.getElementById('fault-time-edit-error');
+    const saveBtn = document.getElementById('fault-time-edit-save');
+
+    startInput.value = formatDateTimeLocalInput(fault.startTime);
+    endInput.value = formatDateTimeLocalInput(fault.endTime);
+    error.style.display = 'none';
+    error.textContent = '';
+    meta.innerHTML = `
+        <strong>الماكينة:</strong> ${String(fault.machineNumber ?? '-')} &nbsp; | &nbsp;
+        <strong>العطل:</strong> كود ${String(fault.faultCode ?? '-')} — ${String(fault.faultName ?? '-')}
+        <br><strong>الحالة الحالية:</strong> ${fault.status === 'finished' ? 'تم الإصلاح' : fault.status === 'awaiting_leader_receipt' ? 'في انتظار استلام قائد الفريق' : 'مفتوح'}
+    `;
+
+    const modalClose = () => modal.classList.add('hidden');
+    modal.classList.remove('hidden');
+    setTimeout(() => startInput.focus(), 50);
+
+    // لا نربط أكثر من مستمع حفظ لنفس الزر؛ كل فتح للنافذة يستبدل المرجع الحالي فقط.
+    saveBtn.onclick = async () => {
+        const newStart = parseDateTimeLocalInput(startInput.value);
+        const newEnd = endInput.value ? parseDateTimeLocalInput(endInput.value) : null;
+
+        if (!Number.isFinite(newStart)) {
+            error.textContent = '⚠️ أدخل وقت بداية صحيحًا.';
+            error.style.display = 'block';
+            return;
+        }
+        if (newEnd !== null && !Number.isFinite(newEnd)) {
+            error.textContent = '⚠️ أدخل وقت نهاية صحيحًا أو اتركه فارغًا.';
+            error.style.display = 'block';
+            return;
+        }
+        if (newEnd !== null && newEnd <= newStart) {
+            error.textContent = '⚠️ وقت النهاية يجب أن يكون بعد وقت البداية.';
+            error.style.display = 'block';
+            return;
+        }
+        if (fault.status === 'finished' && newEnd === null) {
+            error.textContent = '⚠️ العطل المسجل كـ «تم الإصلاح» يجب أن يحتوي على وقت نهاية.';
+            error.style.display = 'block';
+            return;
+        }
+
+        const index = faults.findIndex(f => String(f.id) === key);
+        if (index < 0) {
+            error.textContent = '⚠️ تعذر العثور على العطل. حدّث السجل وحاول مرة أخرى.';
+            error.style.display = 'block';
+            return;
+        }
+
+        const updated = { ...faults[index] };
+        updated.startTime = newStart;
+
+        if (newEnd === null) {
+            updated.endTime = null;
+            // نحافظ على الحالة المفتوحة الحالية إذا لم توجد نهاية.
+            if (updated.status === 'finished') updated.status = 'awaiting_leader_receipt';
+            updated.durationSeconds = 0;
+            updated.durationMinutes = 0;
+        } else {
+            updated.endTime = newEnd;
+            // وجود نهاية مصححة يعني أن العطل مغلق إداريًا.
+            updated.status = 'finished';
+            updated.durationSeconds = Math.max(0, (newEnd - newStart) / 1000);
+            updated.durationMinutes = updated.durationSeconds / 60;
+        }
+
+        updated.adminTimeEditedAt = getSynchronizedNow();
+        updated.adminTimeEdited = true;
+
+        // اجعل سجل الأعطال الكامل هو المصدر الفوري لكل الشاشات، حتى قبل وصول
+        // حدث Firebase، مع إبقاء التعديل محميًا من أي snapshot قديم.
+        pendingFaultEdits.set(String(updated.id), { ...updated });
+        cachedFaults = faults.map(f => String(f.id) === key ? updated : f);
+        firebaseFaultsSyncReady = true;
+        localStorage.setItem("factory5_faults_backup", JSON.stringify(cachedFaults));
+
+        saveBtn.disabled = true;
+        const oldText = saveBtn.textContent;
+        saveBtn.textContent = '⏳ جاري الحفظ...';
+        try {
+            // نكتب العطل المعدل في نفس عقدته فقط، وليس كل سجل الأعطال، لمنع
+            // أي تبويب آخر قديم من إعادة نسخة قديمة فوق التعديل.
+            await persistSingleFaultToFirebase(updated);
+
+            // بعد نجاح الكتابة يصبح هذا هو المصدر المحلي المؤقت، ثم مستمع Firebase
+            // سيعيد نفس القيمة على كل الشاشات والأجهزة.
+            faults[index] = updated;
+            cachedFaults = faults.map(f => String(f.id) === key ? updated : f);
+            localStorage.setItem("factory5_faults_backup", JSON.stringify(cachedFaults));
+
+            // تحديث فوري لكل الشاشات من نفس سجل الأعطال الموحد.
+            refreshAllFaultViews();
+
+            // تحقق أخير من Firebase؛ إذا اختلفت القيمة لأي سبب نستخدم القيمة
+            // المحفوظة فعليًا بدل الاعتماد على نسخة قديمة في الذاكرة.
+            if (rtdb) {
+                const snap = await rtdb.ref('factory5_faults').once('value');
+                const data = snap.val();
+                const saved = data && typeof data === 'object'
+                    ? Object.values(data).find(item => item && String(item.id) === String(updated.id))
+                    : null;
+                if (!saved || Number(saved.startTime) !== Number(updated.startTime) || Number(saved.endTime) !== Number(updated.endTime)) {
+                    throw new Error('FIREBASE_VERIFY_FAILED');
+                }
+                // اجعل النسخة التي تستخدمها كل الشاشات هي النسخة المقروءة فعليًا من Firebase.
+                applyFirebaseFaultSnapshot(data);
+            }
+
+            modalClose();
+            alert('✅ تم تعديل الوقت وحفظ البداية والنهاية في Firebase. التعديل سيُستخدم الآن في تقرير الأداء والبحث المتقدم وPareto ولوحة المؤشرات.');
+        } catch (saveError) {
+            console.error('Fault time edit save failed:', saveError);
+            error.textContent = '❌ لم يتم حفظ التعديل على Firebase. لم يتم اعتماد التغيير حتى لا تختلف التقارير بين الأجهزة.';
+            error.style.display = 'block';
+        } finally {
+            saveBtn.disabled = false;
+            saveBtn.textContent = oldText;
+        }
+    };
+};
+
 function updateFullLogsTable() {
     const faults = getStoredFaults();
     const tbody = document.querySelector("#full-logs-table tbody");
@@ -3803,21 +4153,37 @@ function updateFullLogsTable() {
         tbody.innerHTML = '<tr><td colspan="12" class="no-data">لا توجد أعطال مسجلة.</td></tr>';
         return;
     }
+
+    const safeText = (value) => String(value ?? '-')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+
     faults.forEach(f => {
         const tr = document.createElement("tr");
+        const duration = (f.startTime && f.endTime)
+            ? formatDuration(getFaultDurationSeconds(f), "seconds")
+            : (f.status === "finished" ? formatDuration(getFaultDurationSeconds(f), "seconds") : "مفتوح");
         tr.innerHTML = `
-            <td>${f.startTime ? new Date(f.startTime).toLocaleDateString("ar-EG") : '-'}</td>
-            <td>${f.machineZone || '-'}</td>
-            <td>${f.machineSection || '-'}</td>
-            <td>${f.machineNumber || '-'}</td>
-            <td>${f.machineStage || '-'}</td>
-            <td>${f.faultCode || '-'}</td>
-            <td>${f.faultName || '-'}</td>
-            <td>${f.startTime ? new Date(f.startTime).toLocaleTimeString("ar-EG") : '-'}</td>
-            <td>${f.endTime ? new Date(f.endTime).toLocaleTimeString("ar-EG") : "مفتوح"}</td>
-            <td>${f.status === "finished" ? formatDuration(getFaultDurationSeconds(f), "seconds") : "مفتوح"}</td>
-            <td>${f.notes || "-"}</td>
-            <td><button class="btn btn-danger" style="padding: 4px 8px; font-size: 12px;" onclick="deleteFault('${f.id}')">🗑 حذف</button></td>
+            <td>${f.startTime ? new Date(Number(f.startTime)).toLocaleDateString("ar-EG") : '-'}</td>
+            <td>${safeText(f.machineZone)}</td>
+            <td>${safeText(f.machineSection)}</td>
+            <td>${safeText(f.machineNumber)}</td>
+            <td>${safeText(f.machineStage)}</td>
+            <td>${safeText(f.faultCode)}</td>
+            <td>${safeText(f.faultName)}</td>
+            <td>${f.startTime ? new Date(Number(f.startTime)).toLocaleTimeString("ar-EG") : '-'}</td>
+            <td>${f.endTime ? new Date(Number(f.endTime)).toLocaleTimeString("ar-EG") : "مفتوح"}</td>
+            <td>${duration}</td>
+            <td>${safeText(f.notes)}</td>
+            <td>
+                <div style="display:flex;gap:5px;flex-wrap:wrap;">
+                    <button class="btn btn-primary" style="padding:4px 8px;font-size:12px;" onclick="editFaultTimes('${String(f.id).replace(/'/g, "\\'")}')">✏️ تعديل الوقت</button>
+                    <button class="btn btn-danger" style="padding:4px 8px;font-size:12px;" onclick="deleteFault('${String(f.id).replace(/'/g, "\\'")}')">🗑 حذف</button>
+                </div>
+            </td>
         `;
         tbody.appendChild(tr);
     });
@@ -3846,7 +4212,7 @@ function executePrintReport() {
     });
 
     document.getElementById("print-meta-info").textContent = `تاريخ الاستخراج: ${new Date().toLocaleString("ar-EG")} | الفترة: ${dateFrom || 'البداية'} إلى ${dateTo || 'الآن'}`;
-    document.getElementById("print-summary-box").innerHTML = `<strong>إجمالي الأعطال بالتقرير:</strong> ${filtered.length} &nbsp;|&nbsp; <strong>إجمالي وقت التوقف:</strong> ${formatDuration(filtered.reduce((sum, f) => sum + ((Number.isFinite(Number(f.startTime)) ? getFaultOperatingSeconds(f, Number(f.startTime), Number.isFinite(Number(f.endTime)) ? Number(f.endTime) : getSynchronizedNow()) : getFaultDurationSeconds(f)) / 60), 0))}`;
+    document.getElementById("print-summary-box").innerHTML = `<strong>إجمالي الأعطال بالتقرير:</strong> ${filtered.length} &nbsp;|&nbsp; <strong>إجمالي وقت التوقف:</strong> ${formatDuration(filtered.reduce((sum, f) => sum + (getFaultDurationSeconds(f, getSynchronizedNow()) / 60), 0))}`;
 
     const tbody = document.querySelector("#print-table-element tbody");
     tbody.innerHTML = "";
@@ -3861,7 +4227,7 @@ function executePrintReport() {
             <td>${f.faultName || '-'}</td>
             <td>${f.startTime ? new Date(f.startTime).toLocaleTimeString("ar-EG") : '-'}</td>
             <td>${f.endTime ? new Date(f.endTime).toLocaleTimeString("ar-EG") : "مفتوح"}</td>
-            <td>${f.status === "finished" ? formatDuration(Number.isFinite(Number(f.startTime)) ? getFaultOperatingSeconds(f, Number(f.startTime), Number.isFinite(Number(f.endTime)) ? Number(f.endTime) : getSynchronizedNow()) : getFaultDurationSeconds(f), "seconds") : "مفتوح"}</td>
+            <td>${f.status === "finished" ? formatDuration(getFaultDurationSeconds(f, getSynchronizedNow()), "seconds") : "مفتوح"}</td>
         `;
         tbody.appendChild(tr);
     });
