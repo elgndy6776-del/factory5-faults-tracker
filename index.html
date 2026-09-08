@@ -457,6 +457,9 @@
                     <h4 style="margin-top:0;color:#1e293b;">📌 المتغيرات المتاحة داخل المعادلة</h4>
                     <div class="formula-variables-grid">
                         <div><code>downtime</code><span>وقت التوقف بالثواني</span></div>
+                        <div><code>operatingDowntime</code><span>وقت التوقف المحتسب داخل الورديات فقط</span></div>
+                        <div><code>operatingShift1Downtime</code><span>توقف الوردية الأولى المحتسب</span></div>
+                        <div><code>operatingShift2Downtime</code><span>توقف الوردية الثانية المحتسب</span></div>
                         <div><code>operating</code><span>وقت التشغيل بالثواني</span></div>
                         <div><code>totalDowntime</code><span>إجمالي التوقف</span></div>
                         <div><code>dailyOperating</code><span>وقت تشغيل اليوم</span></div>
@@ -511,6 +514,21 @@
 
                 <div class="card formula-settings-card">
                     <div class="formula-setting-row">
+                        <label for="formula-operating-downtime">🧮 الوقت المحتسب للتوقف داخل الورديات:</label>
+                        <input id="formula-operating-downtime" class="form-control formula-input" type="text" dir="ltr" autocomplete="off">
+                        <small>الافتراضي: <code>downtime</code> — يستبعد وقت الراحة وأي وقت خارج مواعيد التشغيل.</small>
+                    </div>
+                    <div class="formula-setting-row">
+                        <label for="formula-operating-shift1-downtime">⏱️ توقف الوردية الأولى المحتسب:</label>
+                        <input id="formula-operating-shift1-downtime" class="form-control formula-input" type="text" dir="ltr" autocomplete="off">
+                        <small>الافتراضي: <code>shift1Downtime</code>.</small>
+                    </div>
+                    <div class="formula-setting-row">
+                        <label for="formula-operating-shift2-downtime">⏱️ توقف الوردية الثانية المحتسب:</label>
+                        <input id="formula-operating-shift2-downtime" class="form-control formula-input" type="text" dir="ltr" autocomplete="off">
+                        <small>الافتراضي: <code>shift2Downtime</code>.</small>
+                    </div>
+                    <div class="formula-setting-row">
                         <label for="formula-daily">نسبة التعطل اليومية:</label>
                         <input id="formula-daily" class="form-control formula-input" type="text" dir="ltr" autocomplete="off">
                         <small>الافتراضي: <code>downtime / dailyOperating * 100</code></small>
@@ -561,7 +579,7 @@
                         <small>الافتراضي: <code>downtime / operating * 100</code></small>
                     </div>
                     <div style="margin-top:12px;padding:10px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:7px;color:#1e3a8a;line-height:1.8;font-size:13px;">
-                        🔗 <strong>مصدر موحّد:</strong> كل النسب الموجودة في تقرير أداء الماكينات، اختبار الحساب، وتحليل Pareto يتم أخذ معادلاتها من هذه الصفحة. أي تعديل وحفظ هنا يُطبَّق على كل الشاشات التي تستخدم نفس النسبة.
+                        🔗 <strong>مصدر موحّد:</strong> وقت التوقف المحتسب داخل مواعيد التشغيل فقط، مع استبعاد الراحة والوقت خارج الورديات. استخدم متغيرات الوقت المحتسب في المعادلات، وجميع الشاشات تعتمد على نفس المصدر. كل النسب الموجودة في تقرير أداء الماكينات، اختبار الحساب، وتحليل Pareto يتم أخذ معادلاتها من هذه الصفحة. أي تعديل وحفظ هنا يُطبَّق على كل الشاشات التي تستخدم نفس النسبة.
                     </div>
                     <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:15px;">
                         <button id="save-formula-settings-btn" class="btn btn-success">💾 حفظ المعادلات</button>
