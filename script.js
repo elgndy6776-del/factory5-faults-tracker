@@ -1637,6 +1637,31 @@ function setupEventListeners() {
         searchInput.addEventListener("keypress", (e) => {
             if (e.key === "Enter") findAndSelectMachine(searchInput.value.trim());
         });
+
+        // البحث التلقائي بمجرد اكتمال رقم الماكينة:
+        // العامل لا يحتاج إلى الضغط على زر "بحث".
+        // أثناء الكتابة لا تظهر رسائل خطأ، وعند الوصول لرقم موجود تظهر البيانات فورًا.
+        searchInput.addEventListener("input", () => {
+            const value = searchInput.value.trim();
+
+            if (!value) {
+                selectedMachine = null;
+                const card = document.getElementById("machine-info-card");
+                if (card) card.classList.add("hidden");
+                return;
+            }
+
+            const normalized = value.replace(/\s+/g, "");
+            const machine = MACHINES.find(m =>
+                String(m.number).trim() === value ||
+                String(m.number).replace(/\s+/g, "") === normalized
+            );
+
+            if (machine) {
+                // نستخدم نفس الدالة الموجودة بالفعل حتى تظل كل وظائف العرض كما هي.
+                findAndSelectMachine(value);
+            }
+        });
     }
 
     // 2. الكاميرا والـ QR
