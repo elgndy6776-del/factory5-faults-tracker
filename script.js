@@ -183,6 +183,86 @@ let FAULT_CODES = [
     { code: 17, name: "انقطاع كهرباء" }
 ];
 
+// خريطة توافق أكواد الأعطال بعد تغيير رقم الكود من الإدارة.
+// مثال: لو تم تغيير كود الكهرباء من 5 إلى 4، تظل الأعطال القديمة
+// المسجلة بكود 5 ظاهرة على شاشة الكود 4، بينما الأعطال الجديدة تُسجل بالكود 4.
+// هذا يحافظ على البيانات التاريخية ويمنع توقف شاشة الفني عند إعادة ترقيم كود.
+let FAULT_CODE_ALIASES = {};
+let faultCodeAliasesSyncReady = false;
+
+function normalizeFaultCodeAliases(value) {
+    const out = {};
+    if (!value || typeof value !== 'object') return out;
+    Object.keys(value).forEach(oldCode => {
+        const from = Number(oldCode);
+        const to = Number(value[oldCode]);
+        if (Number.isInteger(from) && from > 0 && Number.isInteger(to) && to > 0 && from !== to) {
+            out[String(from)] = to;
+        }
+    });
+    return out;
+}
+
+function saveFaultCodeAliasesLocal() {
+    try { localStorage.setItem('factory5_fault_code_aliases_backup', JSON.stringify(FAULT_CODE_ALIASES)); } catch (_) {}
+}
+
+function getStoredFaultCodeAliases() {
+    try {
+        return normalizeFaultCodeAliases(JSON.parse(localStorage.getItem('factory5_fault_code_aliases_backup') || '{}'));
+    } catch (_) {
+        return {};
+    }
+}
+
+function saveFaultCodeAliases() {
+    FAULT_CODE_ALIASES = normalizeFaultCodeAliases(FAULT_CODE_ALIASES);
+    saveFaultCodeAliasesLocal();
+    if (rtdb) {
+        rtdb.ref('factory5_fault_code_aliases').set(FAULT_CODE_ALIASES).catch(() => {});
+    } else {
+        firebaseRestPut('factory5_fault_code_aliases', FAULT_CODE_ALIASES).catch(() => {});
+    }
+}
+
+function setupFaultCodeAliasesSync() {
+    FAULT_CODE_ALIASES = getStoredFaultCodeAliases();
+    faultCodeAliasesSyncReady = true;
+    if (!rtdb) return;
+    rtdb.ref('factory5_fault_code_aliases').on('value', snapshot => {
+        const remote = snapshot.val();
+        if (remote && typeof remote === 'object') {
+            FAULT_CODE_ALIASES = normalizeFaultCodeAliases(remote);
+            saveFaultCodeAliasesLocal();
+        } else if (Object.keys(FAULT_CODE_ALIASES).length) {
+            // لا نمسح توافقات محفوظة محليًا إذا كان مسار Firebase جديدًا وفارغًا.
+            rtdb.ref('factory5_fault_code_aliases').set(FAULT_CODE_ALIASES).catch(() => {});
+        }
+        renderTechDashboard();
+    });
+}
+
+function resolveFaultCodeForScreen(code) {
+    let current = Number(code);
+    const visited = new Set();
+    for (let i = 0; i < 12 && Number.isInteger(current) && current > 0; i++) {
+        if (visited.has(current)) break;
+        visited.add(current);
+        const next = Number(FAULT_CODE_ALIASES[String(current)]);
+        if (!Number.isInteger(next) || next <= 0 || next === current) break;
+        current = next;
+    }
+    return current;
+}
+
+function faultCodeMatchesScreen(faultCode, screenCodes) {
+    const targetCodes = new Set((screenCodes || []).map(Number).filter(Number.isFinite));
+    const code = Number(faultCode);
+    if (!Number.isFinite(code)) return false;
+    if (targetCodes.has(code)) return true;
+    return targetCodes.has(resolveFaultCodeForScreen(code));
+}
+
 
 // إعدادات شاشات الفنيين - تحفظ التوزيع الحالي كما هو، وتسمح للإدارة بتعديله لاحقًا.
 const DEFAULT_TECH_SCREENS = [
@@ -214,21 +294,66 @@ function renderTechScreenManagementTable(){
     tb.innerHTML='';
     TECH_SCREENS.forEach(sc=>{ const tr=document.createElement('tr'); tr.innerHTML=`<td>${sc.name}</td><td>${sc.codes.length?sc.codes.join('، '):'بدون أكواد'}</td><td><button class="btn btn-secondary" onclick="editTechScreen('${sc.id}')">✏️ تعديل</button></td>`; tb.appendChild(tr); });
 }
+function normalizeTechScreensValue(value){
+    const raw = Array.isArray(value)
+        ? value
+        : (value && typeof value === 'object' ? Object.keys(value).sort().map(k => value[k]) : []);
+    return raw.map((x,i)=>({
+        id:String(x?.id || ('screen_'+i)),
+        name:String(x?.name || 'شاشة فنيين'),
+        codes:[...new Set((Array.isArray(x?.codes) ? x.codes : []).map(Number).filter(Number.isFinite))]
+    }));
+}
+function applyTechScreensSnapshot(value){
+    const list = normalizeTechScreensValue(value);
+    // لقطة Firebase هي المصدر المشترك. حتى اللقطة الفارغة مهمة لأنها تعني أن
+    // الإدارة حذفت كل الشاشات، لذلك لا نحتفظ بنسخة محلية قديمة.
+    TECH_SCREENS = list;
+    saveTechScreensLocal(TECH_SCREENS);
+    techScreensSyncReady = true;
+    populateTechScreenCodeSelector();
+    renderTechScreenManagementTable();
+    renderTechDashboard();
+}
 function setupTechScreensSync(){
     TECH_SCREENS=getStoredTechScreens(); saveTechScreensLocal(TECH_SCREENS); techScreensSyncReady=true; populateTechScreenCodeSelector(); renderTechScreenManagementTable(); renderTechDashboard();
     if(!rtdb) return;
-    rtdb.ref('factory5_tech_screens').on('value',snap=>{
-        const v=snap.val();
-        if(v && typeof v==='object'){
-            const list=Array.isArray(v)?v:Object.keys(v).sort().map(k=>v[k]);
-            if(list.length){ TECH_SCREENS=list.map((x,i)=>({id:String(x.id||('screen_'+i)),name:String(x.name||'شاشة فنيين'),codes:Array.isArray(x.codes)?x.codes.map(Number).filter(Number.isFinite):[]})); saveTechScreensLocal(TECH_SCREENS); populateTechScreenCodeSelector(); renderTechScreenManagementTable(); renderTechDashboard(); }
-        }
+    const screensRef = rtdb.ref('factory5_tech_screens');
+
+    // تحديث كامل فوري عند أي تعديل إداري. لا يوجد Refresh مطلوب في لوحة الفنيين.
+    screensRef.on('value', snap=>{
+        applyTechScreensSnapshot(snap.val());
     });
+
+    // مستمعون مباشِرون إضافيون لكل شاشة. هذا يحمي من تأخر value event في
+    // بعض المتصفحات/التبويبات ويجعل تغيير اسم الشاشة أو أكوادها يظهر فورًا.
+    const applySingleScreenChange = (snapshot, removed=false) => {
+        const key = String(snapshot.key || '');
+        if (!key) return;
+        let next = TECH_SCREENS.filter(sc => String(sc.id) !== key);
+        if (!removed) {
+            const x = snapshot.val();
+            if (x && typeof x === 'object') {
+                next.push(normalizeTechScreensValue([x])[0]);
+            }
+        }
+        applyTechScreensSnapshot(next);
+    };
+    screensRef.on('child_added', snap => applySingleScreenChange(snap, false));
+    screensRef.on('child_changed', snap => applySingleScreenChange(snap, false));
+    screensRef.on('child_removed', snap => applySingleScreenChange(snap, true));
 }
 function saveTechScreens(list){
     TECH_SCREENS=list.map(x=>({id:String(x.id),name:String(x.name||'شاشة فنيين'),codes:[...new Set((x.codes||[]).map(Number).filter(Number.isFinite))]}));
     saveTechScreensLocal(TECH_SCREENS); populateTechScreenCodeSelector(); renderTechScreenManagementTable(); renderTechDashboard();
-    if(rtdb) { const obj={}; TECH_SCREENS.forEach(x=>obj[x.id]=x); rtdb.ref('factory5_tech_screens').set(obj); }
+    if(rtdb) {
+        const obj={}; TECH_SCREENS.forEach(x=>obj[x.id]=x);
+        // إرسال التوزيع كعملية واحدة إلى Firebase؛ كل الشاشات المشتركة تستقبل
+        // الحدث فورًا عبر value/child listeners.
+        rtdb.ref('factory5_tech_screens').set(obj).catch(()=>{});
+    } else {
+        firebaseRestPut('factory5_tech_screens', Object.fromEntries(TECH_SCREENS.map(x=>[x.id,x]))).catch(()=>{});
+    }
 }
 function clearTechScreenForm(){
     const id=document.getElementById('tech-screen-edit-id');
@@ -290,7 +415,7 @@ function renderTechDashboard(){
         const box=document.createElement('div'); box.style.cssText='background:#fff;padding:15px;border-radius:8px;border-top:5px solid #64748b;box-shadow:0 2px 4px rgba(0,0,0,0.1);';
         const h=document.createElement('h3'); h.style.cssText='margin-top:0;color:#334155;border-bottom:1px solid #eee;padding-bottom:10px;'; h.textContent=`${sc.name} (${sc.codes.length? 'كود '+sc.codes.join('، ') : 'بدون أكواد'})`; box.appendChild(h);
         const holder=document.createElement('div');
-        const list=activeFaults.filter(f=>sc.codes.includes(Number(f.faultCode)));
+        const list=activeFaults.filter(f=>faultCodeMatchesScreen(f.faultCode, sc.codes));
         holder.innerHTML=list.length?list.map(f=>createTechFaultCardHTML(f)).join(''):'<p class="no-data" style="color:#64748b;font-size:13px;">لا توجد أعطال حالياً.</p>';
         box.appendChild(holder); grid.appendChild(box);
     });
@@ -319,7 +444,7 @@ function renderTeamLeaderDashboard(){
     }).join('');
 }
 
-window.receiveMachineByTeamLeader=function(faultId){
+window.receiveMachineByTeamLeader=async function(faultId){
     const key=String(faultId);
     const faults=getStoredFaults();
     const fault=faults.find(f=>String(f.id)===key);
@@ -337,10 +462,15 @@ window.receiveMachineByTeamLeader=function(faultId){
     fault.durationMinutes = fault.durationSeconds / 60;
     fault.receivedBy='قائد الفريق';
     fault.status='finished';
-    saveStoredFaults(faults);
+    try {
+        await saveFaultStateFast(fault);
+    } catch (_) {
+        // لا نعيد فتح العطل محليًا إذا تأخر الاتصال؛ الحالة النهائية محفوظة محليًا.
+    }
     loadFaultsFromStorage();
     renderTechDashboard();
     renderTeamLeaderDashboard();
+    // الصوت يظل مربوطًا بانتقال الحالة إلى finished عبر مراقب Firebase.
     alert(`✅ تم استلام الماكينة ${fault.machineNumber||''} من الفني وتسجيلها كمغلقة نهائياً.`);
 };
 
@@ -375,18 +505,18 @@ function setupFaultCodesSync() {
     if (!rtdb) return;
     rtdb.ref('factory5_fault_codes').on('value', (snapshot) => {
         const data = snapshot.val();
-        if (data && typeof data === 'object') {
-            const list = Array.isArray(data) ? data : Object.values(data);
-            const clean = list.map(x => ({ code: Number(x.code), name: String(x.name || '').trim() }))
-                .filter(x => Number.isFinite(x.code) && x.name)
-                .sort((a,b) => a.code - b.code);
-            if (clean.length) {
-                FAULT_CODES = clean;
-                saveFaultCodesLocal(FAULT_CODES);
-            }
-        }
+        const list = Array.isArray(data) ? data : (data && typeof data === 'object' ? Object.values(data) : []);
+        const clean = list.map(x => ({ code: Number(x.code), name: String(x.name || '').trim() }))
+            .filter(x => Number.isFinite(x.code) && x.name)
+            .sort((a,b) => a.code - b.code);
+        // حتى الحذف الكامل يجب أن ينعكس فورًا؛ لا نحتفظ بقائمة قديمة على جهاز الفني.
+        FAULT_CODES = clean;
+        saveFaultCodesLocal(FAULT_CODES);
         populateFaultCodes();
         updateFaultCodesManagementTable();
+        populateTechScreenCodeSelector();
+        renderTechScreenManagementTable();
+        renderTechDashboard();
     });
 }
 
@@ -452,6 +582,7 @@ function saveFaultCodeFromAdmin() {
     if (!name) { alert('من فضلك اكتب اسم/وصف العطل.'); return; }
 
     const editing = original !== '';
+    const originalNumber = Number(original);
     const duplicate = FAULT_CODES.find(x => String(x.code) === String(code) && String(x.code) !== original);
     if (duplicate) { alert(`كود ${code} موجود بالفعل. اختر كودًا آخر.`); return; }
 
@@ -460,11 +591,35 @@ function saveFaultCodeFromAdmin() {
         const exists = FAULT_CODES.some(x => String(x.code) === original);
         if (!exists) { alert('الكود المراد تعديله غير موجود.'); clearFaultCodeForm(); return; }
         next = FAULT_CODES.map(x => String(x.code) === original ? { code, name } : x);
+
+        // عند إعادة ترقيم كود، ننشئ توافقًا دائمًا old -> new.
+        // بذلك لا تضيع الأعطال القديمة، وتظهر فورًا في الشاشة الجديدة.
+        if (Number.isInteger(originalNumber) && originalNumber > 0 && originalNumber !== code) {
+            FAULT_CODE_ALIASES[String(originalNumber)] = code;
+            saveFaultCodeAliases();
+
+            // ننقل توزيع الشاشة من الرقم القديم إلى الرقم الجديد تلقائيًا،
+            // مع ترك أي توزيع آخر كما هو. ولو قام المسؤول بالنقل يدويًا بعد ذلك
+            // سيظل الحفظ اليدوي هو المتحكم النهائي.
+            const migratedScreens = TECH_SCREENS.map(sc => ({
+                ...sc,
+                codes: [...new Set((sc.codes || []).map(Number).map(c => c === originalNumber ? code : c).filter(Number.isFinite))]
+            }));
+            saveTechScreens(migratedScreens);
+        }
     } else {
         next = [...FAULT_CODES, { code, name }];
+        // إذا أُعيد استخدام رقم كان له توافق قديم، فهذا الرقم أصبح كودًا مستقلًا جديدًا.
+        if (FAULT_CODE_ALIASES[String(code)] != null) {
+            delete FAULT_CODE_ALIASES[String(code)];
+            saveFaultCodeAliases();
+        }
     }
+
     saveFaultCodes(next);
-    if (status) status.textContent = editing ? '✅ تم تعديل كود العطل ومزامنته مع شاشة العامل.' : '✅ تم إضافة كود العطل ومزامنته مع شاشة العامل.';
+    if (status) status.textContent = editing
+        ? '✅ تم تعديل كود العطل ومزامنته فورًا مع العامل وشاشات الفنيين.'
+        : '✅ تم إضافة كود العطل ومزامنته فورًا مع العامل وشاشات الفنيين.';
     clearFaultCodeForm();
 }
 
@@ -706,15 +861,19 @@ function getUploadedAlertAudio(key) {
 }
 
 function playUploadedAlertSound(key, fallback) {
-    if (!ensureAlertAudioReady()) return;
+    // الصوت الأساسي هو ملف WAV المرفوع. نستخدم Web Audio فقط كخطة احتياطية
+    // إذا رفض المتصفح تشغيل الملف.
     const audio = getUploadedAlertAudio(key);
     if (!audio) { if (typeof fallback === 'function') fallback(); return; }
     try {
+        ensureAlertAudioReady();
         audio.pause();
         audio.currentTime = 0;
         const result = audio.play();
         if (result && typeof result.catch === 'function') {
-            result.catch(() => { if (typeof fallback === 'function') fallback(); });
+            result.catch(() => {
+                if (typeof fallback === 'function') fallback();
+            });
         }
     } catch (_) {
         if (typeof fallback === 'function') fallback();
@@ -754,9 +913,13 @@ function unlockAlertAudio() {
     try {
         const ready = ensureAlertAudioReady();
         if (!ready) return;
-        const unlock = (key) => {
+        const keys = ['newFault', 'leaderReceipt'];
+        let pending = 0;
+        let completed = 0;
+        keys.forEach((key) => {
             const audio = getUploadedAlertAudio(key);
             if (!audio) return;
+            pending++;
             try {
                 audio.muted = true;
                 audio.currentTime = 0;
@@ -765,14 +928,25 @@ function unlockAlertAudio() {
                     audio.pause();
                     audio.currentTime = 0;
                     audio.muted = false;
+                    completed++;
+                    if (completed === pending) alertAudioUnlocked = true;
                 };
                 if (result && typeof result.then === 'function') result.then(finish).catch(() => { audio.muted = false; });
                 else finish();
             } catch (_) { audio.muted = false; }
-        };
-        unlock('newFault');
-        unlock('leaderReceipt');
-        alertAudioUnlocked = true;
+        });
+        if (pending === 0) alertAudioUnlocked = true;
+    } catch (_) {}
+}
+
+function armTechnicianAlerts() {
+    // دخول شاشة الفنيين يتم من خلال تفاعل المستخدم، لذلك نفتح صلاحية الصوت هنا
+    // أيضًا، وليس فقط عبر مستمعات pointerdown/keydown العامة.
+    unlockAlertAudio();
+    try {
+        const current = getStoredFaults();
+        faultAlertStateById = new Map(current.map(f => [String(f.id), f.status || '']));
+        faultAlertBaselineReady = true;
     } catch (_) {}
 }
 
@@ -892,6 +1066,7 @@ document.addEventListener("DOMContentLoaded", () => {
     setupServerClockSync();
     setupMachineSync();
     setupFaultCodesSync();
+    setupFaultCodeAliasesSync();
     setupTechScreensSync();
     setupFormulaSettingsSync();
     setupEventListeners();
@@ -949,28 +1124,58 @@ function applyFirebaseFaultSnapshot(data) {
 
 function setupRealtimeSync() {
     if (!rtdb) return;
+    const faultsRef = rtdb.ref('factory5_faults');
+
+    // اتصال Firebase: عند رجوع الشبكة نقرأ السجل مرة واحدة للتأكد من
+    // أن كل شاشة بدأت من نفس الحالة السحابية.
     rtdb.ref('.info/connected').on('value', snapshot => {
         firebaseRealtimeConnected = snapshot.val() === true;
         if (firebaseRealtimeConnected) {
-            // عند رجوع الاتصال، أعد قراءة السجل الكامل فورًا ولا تعتمد على النسخة المحلية.
-            rtdb.ref('factory5_faults').once('value').then(snapshot => applyFirebaseFaultSnapshot(snapshot.val())).catch(() => {});
+            faultsRef.once('value').then(snapshot => {
+                liveFaultLastSignature = '';
+                restLastFaultSignature = '';
+                applyFirebaseFaultSnapshot(snapshot.val());
+            }).catch(() => {});
         }
     });
-    const faultsRef = rtdb.ref('factory5_faults');
 
-    // المستمع الأساسي: أي تغيير في أي عطل يعيد رسم الواجهات فورًا.
-    faultsRef.on('value', (snapshot) => {
+    // المستمع الأساسي للسجل الكامل.
+    faultsRef.on('value', snapshot => {
         applyFirebaseFaultSnapshot(snapshot.val());
     });
 
-    // مستمعون إضافيون على مستوى العطل نفسه لضمان التحديث الفوري حتى مع تبويب/متصفح
-    // يتأخر في معالجة حدث value. هذه الأحداث لا تكتب أي بيانات؛ فقط تعيد الرسم.
-    const refreshFromFirebase = () => {
-        faultsRef.once('value').then(snapshot => applyFirebaseFaultSnapshot(snapshot.val())).catch(() => {});
-    };
-    faultsRef.on('child_added', refreshFromFirebase);
-    faultsRef.on('child_changed', refreshFromFirebase);
-    faultsRef.on('child_removed', refreshFromFirebase);
+    // مهم جدًا: لا ننتظر إعادة قراءة العقدة كلها عند إضافة/تعديل عطل.
+    // نأخذ العطل الذي تغيّر مباشرة من child snapshot ونحدث الواجهة فورًا.
+    faultsRef.on('child_added', snapshot => {
+        const child = snapshot.val();
+        if (!child || child.id == null) return;
+        const next = getStoredFaults().filter(f => String(f.id) !== String(child.id));
+        cachedFaults = [...next, child];
+        firebaseFaultsSyncReady = true;
+        try { localStorage.setItem('factory5_faults_backup', JSON.stringify(cachedFaults)); } catch (_) {}
+        if (faultAlertBaselineReady) monitorFaultAlerts(cachedFaults);
+        refreshAllFaultViews();
+    });
+
+    faultsRef.on('child_changed', snapshot => {
+        const child = snapshot.val();
+        if (!child || child.id == null) return;
+        const next = getStoredFaults().filter(f => String(f.id) !== String(child.id));
+        cachedFaults = [...next, child];
+        firebaseFaultsSyncReady = true;
+        try { localStorage.setItem('factory5_faults_backup', JSON.stringify(cachedFaults)); } catch (_) {}
+        if (faultAlertBaselineReady) monitorFaultAlerts(cachedFaults);
+        refreshAllFaultViews();
+    });
+
+    faultsRef.on('child_removed', snapshot => {
+        const child = snapshot.val();
+        const removedId = child && child.id != null ? String(child.id) : String(snapshot.key);
+        cachedFaults = getStoredFaults().filter(f => String(f.id) !== removedId);
+        firebaseFaultsSyncReady = true;
+        try { localStorage.setItem('factory5_faults_backup', JSON.stringify(cachedFaults)); } catch (_) {}
+        refreshAllFaultViews();
+    });
 }
 
 function getStoredMachines() {
@@ -1717,6 +1922,7 @@ function setupEventListeners() {
         if (teamLeaderDashboardSection) teamLeaderDashboardSection.classList.toggle("hidden", !isLeader);
 
         if (isTech) {
+            armTechnicianAlerts();
             loadFaultsFromStorage();
             renderTechDashboard();
         } else if (isLeader) {
@@ -2363,21 +2569,89 @@ function stopScanner() {
     }
 }
 
+let startingFaultNow = false;
+
+// تسجيل عطل جديد بشكل خفيف: لا نعيد كتابة سجل الأعطال بالكامل عند كل ضغطة.
+// هذا يمنع صفحة العامل من التهنيج عندما يكبر سجل Firebase.
+async function saveNewFaultFast(fault) {
+    if (!fault || !fault.id) return false;
+    const id = String(fault.id);
+    const current = getStoredFaults().filter(f => String(f.id) !== id);
+    cachedFaults = [...current, fault];
+    pendingFaultEdits.set(id, JSON.parse(JSON.stringify(fault)));
+    try {
+        localStorage.setItem("factory5_faults_backup", JSON.stringify(cachedFaults));
+    } catch (_) {}
+
+    // اكتب العطل الجديد فقط في Firebase، وانتظر نجاح الكتابة.
+    // هذا يضمن أن كل شاشة أخرى ستستقبل child_added/child_changed مباشرة.
+    try {
+        if (rtdb) {
+            await rtdb.ref('factory5_faults').child(id).set(fault);
+        } else {
+            await firebaseRestPut(`factory5_faults/${encodeURIComponent(id)}`, fault);
+        }
+        pendingFaultEdits.delete(id);
+        return true;
+    } catch (err) {
+        // نترك pending محليًا حتى لا تمسح لقطة قديمة العطل الجديد.
+        console.error('saveNewFaultFast failed:', err);
+        return false;
+    }
+}
+
+// تحديث حالة عطل واحد فقط، بدون إعادة كتابة سجل الأعطال بالكامل.
+// هذا يمنع التحديث المتزامن من تبويب/جهاز آخر من إعادة العطل إلى حالته القديمة.
+async function saveFaultStateFast(fault) {
+    if (!fault || !fault.id) throw new Error('INVALID_FAULT');
+    const id = String(fault.id);
+    pendingFaultEdits.set(id, JSON.parse(JSON.stringify(fault)));
+    cachedFaults = getStoredFaults().map(f => String(f.id) === id ? fault : f);
+    try {
+        localStorage.setItem("factory5_faults_backup", JSON.stringify(cachedFaults));
+    } catch (_) {}
+
+    try {
+        await persistSingleFaultToFirebase(fault);
+        // اترك النسخة المؤقتة لحظات/حتى تصل لقطة Firebase المطابقة.
+        setTimeout(() => {
+            const latest = cachedFaults.find(f => String(f.id) === id);
+            if (latest && String(latest.status || '') === String(fault.status || '') &&
+                Number(latest.startTime) === Number(fault.startTime) &&
+                Number(latest.endTime || 0) === Number(fault.endTime || 0)) {
+                pendingFaultEdits.delete(id);
+            }
+        }, 1500);
+    } catch (err) {
+        // لا نمسح الحالة المحلية إذا تأخر Firebase؛ ستبقى محفوظة محليًا.
+        throw err;
+    }
+    refreshAllFaultViews();
+}
+
 function startFaultRecord() {
+    if (startingFaultNow) return;
     if (!selectedMachine) {
         alert("من فضلك حدد الماكينة أولاً");
         return;
     }
-    const faultCodeVal = document.getElementById("fault-select").value;
+    const faultSelect = document.getElementById("fault-select");
+    const faultCodeVal = faultSelect ? faultSelect.value : "";
     if (!faultCodeVal) {
         alert("من فضلك اختر نوع العطل");
         return;
     }
-    const faultObj = FAULT_CODES.find(f => f.code == faultCodeVal);
-    const notes = document.getElementById("fault-notes").value.trim();
+    const faultObj = FAULT_CODES.find(f => String(f.code) === String(faultCodeVal));
+    if (!faultObj) {
+        alert("كود العطل غير موجود حاليًا. افتح القائمة مرة أخرى واختر العطل.");
+        populateFaultCodes();
+        return;
+    }
+    const notes = document.getElementById("fault-notes")?.value.trim() || "";
 
+    startingFaultNow = true;
     const newFault = {
-        id: "f_" + Date.now(),
+        id: "f_" + Date.now() + "_" + Math.random().toString(36).slice(2, 7),
         machineNumber: selectedMachine.number,
         machineStage: selectedMachine.stage,
         machineZone: selectedMachine.zone,
@@ -2386,23 +2660,30 @@ function startFaultRecord() {
         faultName: faultObj.name,
         startTime: getSynchronizedNow(),
         endTime: null,
-        durationMinutes: 0, // للتوافق مع البيانات القديمة
+        durationMinutes: 0,
         durationSeconds: 0,
         notes: notes,
         status: "active"
     };
 
-    const faults = getStoredFaults();
-    faults.push(newFault);
-    saveStoredFaults(faults);
-    // تحديث واجهة العامل والفنيين فورًا على نفس الجهاز بدون انتظار Refresh.
-    loadFaultsFromStorage();
+    // يظهر العطل فورًا على الجهاز الحالي، ثم يُرسل إلى Firebase.
+    try { loadFaultsFromStorage(); } catch (_) {}
+    saveNewFaultFast(newFault).then(ok => {
+        if (!ok) {
+            // يظل العطل ظاهرًا محليًا، وتستمر طبقة المزامنة الاحتياطية في المحاولة.
+            console.warn('تعذر إرسال العطل الجديد إلى Firebase فورًا.');
+        }
+    });
 
-    document.getElementById("machine-search-input").value = "";
-    document.getElementById("machine-info-card").classList.add("hidden");
-    document.getElementById("fault-select").value = "";
-    document.getElementById("fault-notes").value = "";
+    const machineInput = document.getElementById("machine-search-input");
+    const machineCard = document.getElementById("machine-info-card");
+    const notesInput = document.getElementById("fault-notes");
+    if (machineInput) machineInput.value = "";
+    if (machineCard) machineCard.classList.add("hidden");
+    if (faultSelect) faultSelect.value = "";
+    if (notesInput) notesInput.value = "";
     selectedMachine = null;
+    startingFaultNow = false;
 
     alert("تم تسجيل بداية العطل بنجاح");
 }
@@ -2462,7 +2743,7 @@ function loadFaultsFromStorage() {
 
 let finishingFaultIds = new Set();
 
-window.endFault = function(faultId) {
+window.endFault = async function(faultId) {
     const key = String(faultId);
     // منع الضغط المتكرر على زر "تم الإصلاح"؛ أول ضغطة فقط تنهي خطوة الفني.
     if (finishingFaultIds.has(key)) return;
@@ -2473,17 +2754,25 @@ window.endFault = function(faultId) {
         return;
     }
     finishingFaultIds.add(key);
-    // الفني يضغط "تم الإصلاح" فقط؛ العطل ينتقل لقائد الفريق،
+    // الفني/العامل يضغط "انتهاء العطل" فقط؛ العطل ينتقل لقائد الفريق،
     // ويستمر عداد التوقف حتى يضغط قائد الفريق على الاستلام فعليًا.
     fault.status = "awaiting_leader_receipt";
-    // لا نضيف اسم الفني أو وقت استلامه أو بداية/انتهاء الإصلاح.
     // لا نثبت endTime إلا عند استلام قائد الفريق.
-    saveStoredFaults(faults);
-    loadFaultsFromStorage();
-    renderTechDashboard();
-    renderTeamLeaderDashboard();
-    alert(`تم تسجيل انتهاء الإصلاح. الماكينة الآن في انتظار استلام قائد الفريق.`);
-    finishingFaultIds.delete(key);
+    try {
+        await saveFaultStateFast(fault);
+        loadFaultsFromStorage();
+        renderTechDashboard();
+        renderTeamLeaderDashboard();
+        alert(`تم تسجيل انتهاء الإصلاح. الماكينة الآن في انتظار استلام قائد الفريق.`);
+    } catch (err) {
+        // الحالة المحلية ظلت محفوظة؛ لا نعيد الزر لحالة قديمة ولا نحذف العطل.
+        loadFaultsFromStorage();
+        renderTechDashboard();
+        renderTeamLeaderDashboard();
+        alert("تم تسجيل انتهاء العطل على الجهاز، وجاري مزامنة التغيير مع باقي الشاشات.");
+    } finally {
+        finishingFaultIds.delete(key);
+    }
 };
 
 window.deleteFault = function(faultId) {
@@ -3746,15 +4035,12 @@ function updateParetoTable() {
     if (!tbody) return;
     tbody.innerHTML = "";
 
-    const durationOfFault = (f) => {
-        const start = Number(f.startTime);
-        const end = Number(f.endTime);
-        if (Number.isFinite(start)) {
-            const effectiveEnd = Number.isFinite(end) ? end : getSynchronizedNow();
-            return Math.max(0, Math.floor(getFaultDurationSeconds(f, getSynchronizedNow())));
-        }
-        return Math.max(0, Math.floor(getFaultDurationSeconds(f)));
-    };
+    // مهم جدًا: استخدم نفس قيمة الثواني من سجل الأعطال بدون تقريب كل عطل على حدة.
+    // التقريب كان يتم قبل التجميع، وبالتالي لو كان للكود أكثر من عطل كانت ثوانٍ
+    // الكسور تضيع عدة ثوانٍ ويظهر Pareto أقل من البحث المتقدم.
+    // الآن نجمع الثواني الخام أولاً، ثم formatDuration هو الذي يقرّب العرض النهائي
+    // مرة واحدة فقط، لذلك البحث المتقدم وPareto يعرضان نفس المدة من نفس السجل.
+    const durationOfFault = (f) => Math.max(0, Number(getFaultDurationSeconds(f, now)) || 0);
 
     const totalFaultsCount = faults.length;
     const totalFaultsDuration = faults.reduce((sum, f) => sum + durationOfFault(f), 0);
