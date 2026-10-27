@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>نظام متابعة أعطال مصنع 5 - شركة ACROW مصر</title>
-    <link rel="stylesheet" href="style.css?v=20260914-fix1">
+    <link rel="stylesheet" href="style.css?v=20261027-maintenance14">
     <!-- مكتبة قراءة باركود QR -->
     <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
     <!-- OCR لقراءة رقم الماكينة المكتوب مباشرة بالكاميرا -->
@@ -31,6 +31,7 @@
             <div class="initial-role-switcher" id="initial-role-switcher">
                 <button type="button" class="initial-role-btn active" data-role="worker">👷 تسجيل الأعطال</button>
                 <button type="button" class="initial-role-btn" data-role="tech">🛠️ إدارة الصيانة</button>
+                <button type="button" class="initial-role-btn" data-role="faultScreens">🗂️ شاشة الأعطال</button>
                 <button type="button" class="initial-role-btn" data-role="leader">👨‍💼 قائد الفريق</button>
                 <button type="button" class="initial-role-btn" data-role="admin">📊 لوحة الإدارة</button>
                 <button type="button" class="initial-role-btn" data-role="topManagement">🏢 Top Management</button>
@@ -63,7 +64,7 @@
         <!-- أزرار تبديل الواجهات (عمال / فنيين) -->
         <div class="view-mode-switcher" style="margin-bottom: 20px;">
             <button id="switch-worker-view" class="btn btn-primary active-mode-btn">👷 واجهة تسجيل العمال</button>
-            <button id="switch-tech-view" class="btn btn-outline">🛠️ إدارة الصيانة / شاشات الفنيين</button>
+            <button id="switch-tech-view" class="btn btn-outline">🗂️ شاشة الأعطال</button>
             <button id="switch-leader-view" class="btn btn-outline">👨‍💼 واجهة قائد الفريق</button>
         </div>
 
@@ -111,33 +112,68 @@
                     <textarea id="fault-notes" class="form-control" placeholder="اكتب أي تفاصيل إضافية هنا..." style="width: 100%; padding: 8px; border: 1px solid #cbd5e1; border-radius: 4px; height: 80px;"></textarea>
                 </div>
 
+                <div class="form-group" style="margin-bottom:12px;">
+                    <label for="fault-permit-requirement" style="display:block;margin-bottom:5px;color:#334155;font-weight:bold;">اشتراط تصريح الأمن الصناعي:</label>
+                    <select id="fault-permit-requirement" class="form-control" style="width:100%;">
+                        <option value="not_required">لا يتطلب تصريح أمن صناعي</option>
+                        <option value="required">يتطلب تصريح أمن صناعي</option>
+                    </select>
+                </div>
+                <div id="fault-permit-status-wrap" class="form-group hidden" style="margin-bottom:12px;">
+                    <label for="fault-permit-status" style="display:block;margin-bottom:5px;color:#334155;font-weight:bold;">حالة التصريح:</label>
+                    <select id="fault-permit-status" class="form-control" style="width:100%;">
+                        <option value="">-- حدد حالة التصريح --</option>
+                        <option value="available">التصريح متوفر ومعتمد</option>
+                        <option value="missing">لا يوجد تصريح</option>
+                    </select>
+                    <small style="color:#b91c1c;">لن يبدأ العطل الذي يتطلب تصريحًا إلا بعد تأكيد أن التصريح متوفر ومعتمد.</small>
+                </div>
                 <button id="start-fault-btn" class="btn btn-success btn-block" style="width: 100%; padding: 10px; font-weight: bold;">🚀 تسجيل وبدء وقت التوقف</button>
+                <button id="no-industrial-permit-btn" type="button" class="btn btn-danger btn-block" style="width:100%;padding:10px;margin-top:8px;background:#b45309;color:#fff;font-weight:bold;">🦺 لا يوجد تصريح أمن صناعي</button>
+                <p style="font-size:12px;color:#64748b;margin:6px 0 0;">يسجل حالة التصريح دون بدء عداد عطل أو احتساب توقف للماكينة.</p>
             </div>
         </section>
 
         <!-- ================= واجهة شاشات الفنيين المستقلة (تظهر للفنيين فقط) ================= -->
         <section id="tech-dashboard-section" class="hidden">
-            <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:10px;"><h2 style="text-align: center; color: #1e293b; margin: 0; flex:1;">🛠️ شاشة الأعطال الفنية والصيانة المستقلة</h2><button id="logout-maintenance-btn" class="btn btn-danger" style="background:#dc2626;color:#fff;">🚪 خروج إدارة الصيانة</button></div>
-            <p style="text-align: center; color: #475569; margin-bottom: 20px; font-weight: 500;">الأعطال الإدارية والتشغيلية (مثل انقطاع الكهرباء والأكواد الإدارية) مسجلة لدى العمال ولا تظهر هنا.</p>
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:10px;"><h2 id="tech-dashboard-title" style="text-align: center; color: #1e293b; margin: 0; flex:1;">🛠️ إدارة الصيانة</h2><button id="logout-maintenance-btn" class="btn btn-danger" style="background:#dc2626;color:#fff;">🚪 خروج إدارة الصيانة</button></div>
+            <p id="tech-dashboard-description" style="text-align: center; color: #475569; margin-bottom: 20px; font-weight: 500;">تظهر هنا أعطال صيانة الكهرباء (3، 12) وصيانة الماكينات (1، 2، 18) وصيانة المرافق (4) فقط.</p>
             
+            <div style="background:#f8fafc;border:1px solid #cbd5e1;border-radius:8px;padding:14px;margin-bottom:16px;">
+                <h3 style="margin:0 0 10px;color:#1e293b;">👨‍🔧 إدارة أسماء الفنيين</h3>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;"><input id="maintenance-staff-name" class="form-control" placeholder="اكتب اسم الفني" style="flex:1;min-width:180px;"><button id="add-maintenance-staff-btn" class="btn btn-success" type="button">➕ إضافة فني</button></div>
+                <div id="maintenance-staff-list" style="margin-top:10px;"></div>
+                <small style="color:#64748b;">الأسماء محفوظة ومزامنة بين الأجهزة المتصلة بقاعدة البيانات.</small>
+            </div>
+            <!-- وضع العرض يحدد تلقائياً حسب مدخل الدخول: الصيانة فقط أو شاشة الأعطال الكاملة -->
+            <div class="maintenance-screen-switcher" style="display:flex;gap:10px;flex-wrap:wrap;margin:12px 0 16px;">
+                <button id="show-maintenance-screens-btn" type="button" class="btn btn-primary" onclick="setMaintenanceScreenMode('maintenance')">🛠️ شاشات إدارة الصيانة</button>
+                <button id="show-all-tech-screens-btn" type="button" class="btn btn-outline" onclick="setMaintenanceScreenMode('all')">🗂️ كل شاشات الأعطال</button>
+            </div>
             <!-- شبكة الشاشات المستقلة للأعطال الفنية -->
             <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 15px;">
                 
                 <!-- 1. شاشة صيانة الكهرباء -->
                 <div style="background: #fff; padding: 15px; border-radius: 8px; border-top: 5px solid #eab308; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-                    <h3 style="margin-top:0; color: #ca8a04; border-bottom: 1px solid #eee; padding-bottom: 10px;">⚡ صيانة الكهرباء (كود 5، 12)</h3>
+                    <h3 style="margin-top:0; color: #ca8a04; border-bottom: 1px solid #eee; padding-bottom: 10px;">⚡ صيانة الكهرباء (كود 3، 12)</h3>
                     <div id="tech-cat-electricity"></div>
                 </div>
 
                 <!-- 2. شاشة صيانة الماكينات -->
                 <div style="background: #fff; padding: 15px; border-radius: 8px; border-top: 5px solid #3b82f6; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-                    <h3 style="margin-top:0; color: #2563eb; border-bottom: 1px solid #eee; padding-bottom: 10px;">⚙️ صيانة الماكينات (كود 1، 2)</h3>
+                    <h3 style="margin-top:0; color: #2563eb; border-bottom: 1px solid #eee; padding-bottom: 10px;">⚙️ صيانة الماكينات (كود 1، 2، 18)</h3>
                     <div id="tech-cat-machines"></div>
+                </div>
+
+                <!-- شاشة صيانة المرافق -->
+                <div style="background:#fff;padding:15px;border-radius:8px;border-top:5px solid #0d9488;box-shadow:0 2px 4px rgba(0,0,0,0.1);">
+                    <h3 style="margin-top:0;color:#0f766e;border-bottom:1px solid #eee;padding-bottom:10px;">🏢 صيانة المرافق (كود 4)</h3>
+                    <div id="tech-cat-facilities"></div>
                 </div>
 
                 <!-- 3. شاشة الميكانيكا والاسطمبات والهواء -->
                 <div style="background: #fff; padding: 15px; border-radius: 8px; border-top: 5px solid #ef4444; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-                    <h3 style="margin-top:0; color: #dc2626; border-bottom: 1px solid #eee; padding-bottom: 10px;">🔧 ورشة العدة (كود 4، 13)</h3>
+                    <h3 style="margin-top:0; color: #dc2626; border-bottom: 1px solid #eee; padding-bottom: 10px;">🔧 ورشة العدة (كود 13)</h3>
                     <div id="tech-cat-mechanics"></div>
                 </div>
 
@@ -160,6 +196,33 @@
                 </div>
 
             </div>
+            <div style="margin-top:20px;">
+                <button id="toggle-maintenance-full-logs-btn" type="button" class="btn btn-primary" aria-expanded="false" aria-controls="maintenance-full-logs-panel">📋 سجل الأعطال الكامل</button>
+                <div id="maintenance-full-logs-panel" class="hidden" style="background:#fff;border:1px solid #cbd5e1;border-radius:8px;padding:14px;margin-top:12px;">
+                    <h3 style="margin:0 0 8px;color:#1e293b;">📋 سجل الأعطال الكامل</h3>
+                    <p style="margin:0 0 12px;color:#64748b;font-size:13px;">عرض فقط — التعديل والحذف متاحان من لوحة الإدارة فقط.</p>
+                    <div class="table-responsive">
+                        <table id="maintenance-full-logs-table" class="data-table">
+                            <thead><tr>
+                                <th>التاريخ</th><th>المنطقة</th><th>القسم</th><th>الماكينة</th><th>المرحلة</th><th>الكود</th><th>اسم العطل</th><th>البداية</th><th>النهاية</th><th>المدة</th><th>ملاحظات</th><th>اسم قائد الفريق المستلم</th><th>اسم الفني الذي أصلح الماكينة</th><th>إجراء السلامة</th>
+                            </tr></thead><tbody></tbody>
+                        </table>
+                    </div>
+                </div>
+                <div style="margin-top:14px;">
+                    <button id="toggle-repair-timing-dashboard-btn" type="button" class="btn btn-secondary" aria-expanded="false" aria-controls="repair-timing-dashboard-panel">⏱️ لوحة متابعة أوقات الإصلاح والوقت الضائع</button>
+                    <div id="repair-timing-dashboard-panel" class="hidden" style="background:#fff;border:1px solid #cbd5e1;border-radius:8px;padding:14px;margin-top:12px;">
+                        <h3 style="margin:0 0 8px;color:#1e293b;">⏱️ سجل مراحل الإصلاح والتحويل</h3>
+                        <p style="margin:0 0 12px;color:#64748b;font-size:13px;">يعرض وقت بداية ونهاية إصلاح كل قسم، ومدة الإصلاح لكل فني، والوقت الضائع بين تحويل العطل وبداية الإصلاح في القسم التالي.</p>
+                        <div class="table-responsive">
+                            <table id="repair-timing-dashboard-table" class="data-table">
+                                <thead><tr><th>الماكينة</th><th>العطل</th><th>نوع الفترة</th><th>القسم / الشاشة</th><th>الفني</th><th>من</th><th>إلى</th><th>المدة</th></tr></thead>
+                                <tbody><tr><td colspan="8" class="no-data">لا توجد مراحل إصلاح مسجلة حتى الآن.</td></tr></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </section>
 
         <!-- ================= واجهة قائد الفريق ================= -->
@@ -167,6 +230,11 @@
             <div class="card" style="background:#fff; padding:20px; border-radius:8px; box-shadow:0 2px 4px rgba(0,0,0,0.1); border-top:5px solid #16a34a;">
                 <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:8px;"><h2 style="text-align:center; color:#166534; margin:0; flex:1;">👨‍💼 شاشة قائد الفريق</h2><button id="logout-team-leader-btn" class="btn btn-danger" style="background:#dc2626;color:#fff;">🚪 خروج قائد الفريق</button></div>
                 <p style="text-align:center; color:#475569; margin-bottom:20px;">الماكينات التي أنهى الفني إصلاحها وتنتظر تأكيد استلام قائد الفريق.</p>
+                <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:14px;margin-bottom:16px;">
+                    <h3 style="margin:0 0 10px;color:#166534;">👥 إدارة أسماء قادة الفريق</h3>
+                    <div style="display:flex;gap:8px;flex-wrap:wrap;"><input id="team-leader-name" class="form-control" placeholder="اكتب اسم قائد الفريق" style="flex:1;min-width:180px;"><button id="add-team-leader-btn" class="btn btn-success" type="button">➕ إضافة قائد فريق</button></div>
+                    <div id="team-leader-name-list" style="margin-top:10px;"></div>
+                </div>
                 <div id="team-leader-pending-faults" class="faults-grid"></div>
             </div>
         </section>
@@ -720,6 +788,9 @@
                                 <th>النهاية</th>
                                 <th>المدة</th>
                                 <th>ملاحظات</th>
+                                <th>اسم قائد الفريق المستلم</th>
+                                <th>اسم الفني الذي أصلح الماكينة</th>
+                                <th>إجراء السلامة</th>
                                 <th>إجراءات</th>
                             </tr>
                         </thead>
@@ -786,6 +857,6 @@
         </table>
     </div>
 
-    <script src="script.js?v=20260914-fix1"></script>
+    <script src="script.js?v=20261027-maintenance14"></script>
 </body>
 </html>
