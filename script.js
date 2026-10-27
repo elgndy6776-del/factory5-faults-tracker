@@ -46,7 +46,12 @@ function applyRestFaultData(data) {
     const list = data && typeof data === 'object' ? Object.values(data) : [];
     const signature = JSON.stringify(list.map(f => ({
         id: f && f.id, status: f && f.status, startTime: f && f.startTime,
-        endTime: f && f.endTime, durationSeconds: f && f.durationSeconds
+        endTime: f && f.endTime, durationSeconds: f && f.durationSeconds,
+        assignedTechScreenId: f && f.assignedTechScreenId,
+        repairStartedAt: f && f.repairStartedAt,
+        repairSegments: f && f.repairSegments,
+        lostTimeSegments: f && f.lostTimeSegments,
+        technicianName: f && f.technicianName
     })).sort((a,b) => String(a.id).localeCompare(String(b.id))));
     if (signature === restLastFaultSignature && firebaseFaultsSyncReady) return;
     restLastFaultSignature = signature;
@@ -266,9 +271,11 @@ function faultCodeMatchesScreen(faultCode, screenCodes) {
 
 // إعدادات شاشات الفنيين - تحفظ التوزيع الحالي كما هو، وتسمح للإدارة بتعديله لاحقًا.
 const DEFAULT_TECH_SCREENS = [
-    { id: 'electricity', name: '⚡ صيانة الكهرباء', codes: [5, 12] },
-    { id: 'machines', name: '⚙️ صيانة الماكينات', codes: [1, 2] },
-    { id: 'mechanics', name: '🔧 ورشة العدة', codes: [4, 13] },
+    // توزيع الصيانة حسب الأكواد المطلوبة. تم إبقاء بقية الشاشات والأقسام كما هي.
+    { id: 'electricity', name: '⚡ صيانة الكهرباء', codes: [3, 12] },
+    { id: 'machines', name: '⚙️ صيانة الماكينات', codes: [1, 2, 18] },
+    { id: 'facilities', name: '🏢 صيانة المرافق', codes: [4] },
+    { id: 'mechanics', name: '🔧 ورشة العدة', codes: [13] },
     { id: 'air', name: '💨 صيانة الهواء', codes: [6] },
     { id: 'services', name: '🏗️ أمن وأوناش', codes: [10, 16] },
     { id: 'other', name: '🧰 أعطال فنية أخرى / أكواد جديدة', codes: [] }
@@ -405,17 +412,239 @@ function deleteTechScreenFromAdmin(){
     document.getElementById('tech-screen-management-status').textContent='🗑️ تم حذف الشاشة فقط، وجميع الأكواد والأعطال التاريخية محفوظة.';
 }
 function resetTechScreens(){ if(!confirm('استرجاع توزيع شاشات الفنيين الأصلي؟'))return; saveTechScreens(cloneDefaultTechScreens()); clearTechScreenForm(); document.getElementById('tech-screen-management-status').textContent='↩️ تم استرجاع التوزيع الأصلي.'; }
+
+// إضافات الصيانة: قوائم الأسماء وملاحظات الفني وتحويل الأعطال وسجل تصريح الأمن الصناعي.
+const MAINTENANCE_SETTINGS_PATH = 'factory5_maintenance_staff_settings';
+let maintenanceStaffSettings = { technicians: [], leaders: [] };
+let maintenanceSettingsReady = false;
+function cleanNameList(list) { return [...new Set((Array.isArray(list) ? list : []).map(x => String(x || '').trim()).filter(Boolean))]; }
+function renderStaffNameLists() {
+    const techList = document.getElementById('maintenance-staff-list');
+    const leaderList = document.getElementById('team-leader-name-list');
+    if (techList) techList.innerHTML = maintenanceStaffSettings.technicians.length ? maintenanceStaffSettings.technicians.map((n,i)=>`<span style="display:inline-flex;align-items:center;gap:6px;background:#e0f2fe;padding:5px 9px;border-radius:14px;margin:3px;">${escapeStaffText(n)} <button type="button" onclick="removeStaffName('technicians',${i})" style="border:0;background:transparent;color:#b91c1c;cursor:pointer;">✕</button></span>`).join('') : '<span style="color:#64748b;">لم تتم إضافة فنيين بعد.</span>';
+    if (leaderList) leaderList.innerHTML = maintenanceStaffSettings.leaders.length ? maintenanceStaffSettings.leaders.map((n,i)=>`<span style="display:inline-flex;align-items:center;gap:6px;background:#dcfce7;padding:5px 9px;border-radius:14px;margin:3px;">${escapeStaffText(n)} <button type="button" onclick="removeStaffName('leaders',${i})" style="border:0;background:transparent;color:#b91c1c;cursor:pointer;">✕</button></span>`).join('') : '<span style="color:#64748b;">لم تتم إضافة قادة فريق بعد.</span>';
+}
+function escapeStaffText(v) { return String(v).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+async function saveMaintenanceSettings() {
+    maintenanceStaffSettings.technicians = cleanNameList(maintenanceStaffSettings.technicians);
+    maintenanceStaffSettings.leaders = cleanNameList(maintenanceStaffSettings.leaders);
+    try { localStorage.setItem('factory5_maintenance_staff_settings_backup', JSON.stringify(maintenanceStaffSettings)); } catch(_) {}
+    try {
+        if (rtdb) await rtdb.ref(MAINTENANCE_SETTINGS_PATH).set(maintenanceStaffSettings);
+        else await firebaseRestPut(MAINTENANCE_SETTINGS_PATH, maintenanceStaffSettings);
+    } catch(e) { console.warn('تعذر مزامنة أسماء فريق الصيانة؛ تم الاحتفاظ بها محلياً.', e); }
+    renderStaffNameLists(); renderTechDashboard(); renderTeamLeaderDashboard();
+}
+window.removeStaffName = function(kind, index) {
+    if (!['technicians','leaders'].includes(kind)) return;
+    maintenanceStaffSettings[kind].splice(index,1); saveMaintenanceSettings();
+};
+function addStaffName(kind, inputId) {
+    const input = document.getElementById(inputId); const name = input?.value.trim();
+    if (!name) { alert('اكتب الاسم أولاً.'); return; }
+    if (maintenanceStaffSettings[kind].some(x => x.toLocaleLowerCase() === name.toLocaleLowerCase())) { alert('الاسم موجود بالفعل.'); return; }
+    maintenanceStaffSettings[kind].push(name); if(input) input.value=''; saveMaintenanceSettings();
+}
+async function loadMaintenanceSettings() {
+    try {
+        let value = rtdb ? (await rtdb.ref(MAINTENANCE_SETTINGS_PATH).once('value')).val() : await firebaseRestGet(MAINTENANCE_SETTINGS_PATH);
+        if (value && typeof value === 'object') maintenanceStaffSettings = { technicians: cleanNameList(value.technicians), leaders: cleanNameList(value.leaders) };
+        else { const local = JSON.parse(localStorage.getItem('factory5_maintenance_staff_settings_backup') || '{}'); maintenanceStaffSettings = {technicians:cleanNameList(local.technicians),leaders:cleanNameList(local.leaders)}; }
+    } catch(_) { try { const local=JSON.parse(localStorage.getItem('factory5_maintenance_staff_settings_backup')||'{}'); maintenanceStaffSettings={technicians:cleanNameList(local.technicians),leaders:cleanNameList(local.leaders)}; } catch(__) {} }
+    maintenanceSettingsReady = true; renderStaffNameLists();
+    if (rtdb && !window.__factory5StaffListener) { window.__factory5StaffListener=true; rtdb.ref(MAINTENANCE_SETTINGS_PATH).on('value', snap=>{ const v=snap.val(); if(v&&typeof v==='object'){ maintenanceStaffSettings={technicians:cleanNameList(v.technicians),leaders:cleanNameList(v.leaders)}; try{localStorage.setItem('factory5_maintenance_staff_settings_backup',JSON.stringify(maintenanceStaffSettings));}catch(_){} renderStaffNameLists(); renderTechDashboard(); renderTeamLeaderDashboard(); }}); }
+}
+function recordNoIndustrialPermit() {
+    if (!selectedMachine) { alert('من فضلك حدد الماكينة أولاً.'); return; }
+    const event = { id:'permit_'+Date.now()+'_'+Math.random().toString(36).slice(2,7), machineNumber:selectedMachine.number, machineStage:selectedMachine.stage||'', machineZone:selectedMachine.zone||'', machineSection:selectedMachine.section||'', eventType:'no_industrial_security_permit', eventName:'لا يوجد تصريح أمن صناعي', recordedAt:getSynchronizedNow(), notes:document.getElementById('fault-notes')?.value.trim()||'' };
+    const path='factory5_security_permit_events/'+event.id;
+    try { localStorage.setItem('factory5_security_permit_events_backup', JSON.stringify([event,...JSON.parse(localStorage.getItem('factory5_security_permit_events_backup')||'[]')].slice(0,500))); } catch(_) {}
+    const write = rtdb ? rtdb.ref(path).set(event) : firebaseRestPut(path,event);
+    Promise.resolve(write).then(()=>alert(`تم تسجيل «لا يوجد تصريح أمن صناعي» للماكينة ${event.machineNumber} دون بدء عداد العطل.`)).catch(()=>alert('تم تسجيل الحالة على هذا الجهاز، لكن تعذرت مزامنتها مع Firebase حالياً.'));
+}
+window.saveTechnicianComment = async function(id) {
+    const fault=getStoredFaults().find(f=>String(f.id)===String(id)); if(!fault)return;
+    const comment=document.getElementById('tech-comment-'+id)?.value.trim()||'';
+    const tech=document.getElementById('tech-name-'+id)?.value||'';
+    if(!comment && !tech){ alert('اكتب تعليقاً أو اختر اسم الفني.'); return; }
+    fault.technicianName=tech||fault.technicianName||'';
+    fault.technicianComment=comment||fault.technicianComment||'';
+    fault.technicianCommentAt=getSynchronizedNow();
+    try { await saveFaultStateFast(fault); alert('تم حفظ اسم الفني والتعليق.'); } catch(_) { alert('تم حفظ التعديل محلياً، وستتم محاولة مزامنته عند عودة الاتصال.'); }
+    loadFaultsFromStorage();
+};
+// وجهات التحويل الفرعية داخل إدارة الصيانة. تظل تابعة لشاشة صيانة الماكينات حتى يظهر العطل في مكان واحد فقط.
+const MAINTENANCE_TRANSFER_SUBSECTIONS = [
+    { id: 'maintenance:welding', name: 'صيانة اللحام', parentScreenId: 'machines' },
+    { id: 'maintenance:mechanical', name: 'صيانة ميكانيكا', parentScreenId: 'machines' },
+    { id: 'maintenance:preventive', name: 'صيانة وقائية', parentScreenId: 'machines' }
+];
+function getFaultCurrentSectionName(fault) {
+    if (fault && fault.assignedMaintenanceSubsection) return String(fault.assignedMaintenanceSubsection);
+    return TECH_SCREENS.find(x => String(x.id) === String(fault?.assignedTechScreenId))?.name || 'القسم السابق';
+}
+function getTransferDestinationOptions() {
+    return [
+        ...TECH_SCREENS.map(sc => ({ id: String(sc.id), name: sc.name, parentScreenId: String(sc.id), subsection: '' })),
+        ...MAINTENANCE_TRANSFER_SUBSECTIONS.map(sc => ({ id: sc.id, name: sc.name, parentScreenId: sc.parentScreenId, subsection: sc.name }))
+    ];
+}
+
+window.startFaultRepair = async function(id) {
+    const fault = getStoredFaults().find(f => String(f.id) === String(id));
+    if (!fault || fault.status !== 'active') return;
+    if (fault.repairStartedAt) { alert('عداد الإصلاح بدأ بالفعل لهذا العطل.'); return; }
+    const tech = document.getElementById('tech-name-' + id)?.value || fault.technicianName || '';
+    if (maintenanceStaffSettings.technicians.length && !tech) { alert('اختر اسم الفني قبل بدء الإصلاح.'); return; }
+    const now = getSynchronizedNow();
+    fault.technicianName = tech || fault.technicianName || 'فني غير محدد';
+    fault.repairSegments = Array.isArray(fault.repairSegments) ? fault.repairSegments : [];
+    fault.lostTimeSegments = Array.isArray(fault.lostTimeSegments) ? fault.lostTimeSegments : [];
+    if (Number.isFinite(Number(fault.waitingSinceTransferAt)) && Number(fault.waitingSinceTransferAt) > 0) {
+        const lostStart = Number(fault.waitingSinceTransferAt);
+        const lostSeconds = Math.max(0, (now - lostStart) / 1000);
+        fault.lostTimeSegments.push({ from: lostStart, to: now, seconds: lostSeconds, fromScreenName: fault.waitingFromTransferFromName || fault.waitingFromScreenName || 'القسم السابق', toScreenName: getFaultCurrentSectionName(fault) });
+        fault.totalLostTimeSeconds = (Number(fault.totalLostTimeSeconds) || 0) + lostSeconds;
+        fault.waitingSinceTransferAt = null;
+        fault.waitingFromScreenName = '';
+    }
+    fault.repairStartedAt = now;
+    fault.repairStartedBy = fault.technicianName;
+    fault.repairStartedScreenId = fault.assignedTechScreenId || null;
+    fault.repairStartedScreenName = getFaultCurrentSectionName(fault) || 'القسم الفني';
+    fault.repairEvents = Array.isArray(fault.repairEvents) ? fault.repairEvents : [];
+    fault.repairEvents.push({ type: 'repair_started', at: now, technicianName: fault.technicianName, screenName: fault.repairStartedScreenName });
+    try { await saveFaultStateFast(fault); renderRepairTimingDashboard(); }
+    catch (_) { alert('تعذر مزامنة بداية الإصلاح الآن. حاول مرة أخرى بعد التأكد من الاتصال.'); }
+};
+
+window.transferFaultToScreen = async function(id) {
+    const fault=getStoredFaults().find(f=>String(f.id)===String(id)); if(!fault || fault.status!=='active')return;
+    const target=document.getElementById('transfer-screen-'+id)?.value;
+    const destination=getTransferDestinationOptions().find(x=>String(x.id)===String(target));
+    if(!destination){alert('اختر القسم الذي تريد تحويل العطل إليه.');return;}
+    const screen=TECH_SCREENS.find(x=>String(x.id)===String(destination.parentScreenId));
+    if(!screen){alert('القسم المحدد غير متاح حالياً.');return;}
+    const previousScreenId=fault.assignedTechScreenId||null;
+    const previousScreenName=getFaultCurrentSectionName(fault);
+    const transferAt = getSynchronizedNow();
+    const destinationName=destination.subsection || destination.name;
+    fault.repairSegments = Array.isArray(fault.repairSegments) ? fault.repairSegments : [];
+    fault.lostTimeSegments = Array.isArray(fault.lostTimeSegments) ? fault.lostTimeSegments : [];
+    fault.repairEvents = Array.isArray(fault.repairEvents) ? fault.repairEvents : [];
+    if (Number.isFinite(Number(fault.repairStartedAt)) && Number(fault.repairStartedAt) > 0) {
+        const repairStart = Number(fault.repairStartedAt);
+        const repairSeconds = Math.max(0, (transferAt - repairStart) / 1000);
+        fault.repairSegments.push({ screenId: fault.repairStartedScreenId || previousScreenId, screenName: fault.repairStartedScreenName || previousScreenName, technicianName: fault.repairStartedBy || fault.technicianName || 'فني غير محدد', startedAt: repairStart, endedAt: transferAt, durationSeconds: repairSeconds, endReason: 'تحويل العطل' });
+        fault.totalRepairSeconds = (Number(fault.totalRepairSeconds) || 0) + repairSeconds;
+        fault.repairEvents.push({ type: 'repair_paused_for_transfer', at: transferAt, technicianName: fault.repairStartedBy || fault.technicianName || '', fromScreenName: fault.repairStartedScreenName || previousScreenName, toScreenName: destinationName });
+        fault.repairStartedAt = null; fault.repairStartedBy = ''; fault.repairStartedScreenId = null; fault.repairStartedScreenName = '';
+        fault.waitingSinceTransferAt = transferAt; fault.waitingFromTransferFromName = previousScreenName; fault.waitingFromScreenName = destinationName;
+    } else if (!Number.isFinite(Number(fault.waitingSinceTransferAt)) || Number(fault.waitingSinceTransferAt) <= 0) {
+        fault.waitingSinceTransferAt = transferAt; fault.waitingFromTransferFromName = previousScreenName; fault.waitingFromScreenName = destinationName;
+    }
+    fault.assignedTechScreenId=screen.id;
+    fault.assignedMaintenanceSubsection=destination.subsection || '';
+    fault.transfers=Array.isArray(fault.transfers)?fault.transfers:[];
+    fault.transfers.push({fromScreenId:previousScreenId,fromScreenName:previousScreenName,toScreenId:screen.id,toScreenName:destinationName,parentScreenName:screen.name,at:transferAt});
+    fault.faultTransferNote=`تم التحويل: ${previousScreenName} ← ${destinationName}`;
+    try { await saveFaultStateFast(fault); alert(`تم تحويل العطل من ${previousScreenName} إلى ${destinationName}.`); } catch(_) { alert('تم تسجيل التحويل محلياً، وستتم مزامنته عند عودة الاتصال.'); }
+    loadFaultsFromStorage();
+};
+
+function initMaintenanceEnhancements() {
+    const logsToggle = document.getElementById('toggle-maintenance-full-logs-btn');
+    const logsPanel = document.getElementById('maintenance-full-logs-panel');
+    logsToggle?.addEventListener('click', () => {
+        const opening = logsPanel?.classList.contains('hidden');
+        logsPanel?.classList.toggle('hidden', !opening);
+        logsToggle.setAttribute('aria-expanded', opening ? 'true' : 'false');
+    });
+    const repairToggle = document.getElementById('toggle-repair-timing-dashboard-btn');
+    const repairPanel = document.getElementById('repair-timing-dashboard-panel');
+    repairToggle?.addEventListener('click', () => {
+        const opening = repairPanel?.classList.contains('hidden');
+        repairPanel?.classList.toggle('hidden', !opening);
+        repairToggle.setAttribute('aria-expanded', opening ? 'true' : 'false');
+        renderRepairTimingDashboard();
+    });
+    document.getElementById('add-maintenance-staff-btn')?.addEventListener('click',()=>addStaffName('technicians','maintenance-staff-name'));
+    document.getElementById('add-team-leader-btn')?.addEventListener('click',()=>addStaffName('leaders','team-leader-name'));
+    document.getElementById('no-industrial-permit-btn')?.addEventListener('click',recordNoIndustrialPermit);
+    const permitRequirement = document.getElementById('fault-permit-requirement');
+    const permitStatusWrap = document.getElementById('fault-permit-status-wrap');
+    permitRequirement?.addEventListener('change', () => {
+        if (permitStatusWrap) permitStatusWrap.classList.toggle('hidden', permitRequirement.value !== 'required');
+        const permitStatus = document.getElementById('fault-permit-status');
+        if (permitRequirement.value !== 'required' && permitStatus) permitStatus.value = '';
+    });
+    loadMaintenanceSettings();
+}
+
+// وضعا العرض داخل إدارة الصيانة: جميع الشاشات أو شاشة الصيانة المنفصلة فقط.
+let maintenanceScreenMode = 'maintenance';
+window.setMaintenanceScreenMode = function(mode) {
+    maintenanceScreenMode = mode === 'all' ? 'all' : 'maintenance';
+    document.getElementById('show-maintenance-screens-btn')?.classList.toggle('btn-primary', maintenanceScreenMode === 'maintenance');
+    document.getElementById('show-maintenance-screens-btn')?.classList.toggle('btn-outline', maintenanceScreenMode !== 'maintenance');
+    document.getElementById('show-all-tech-screens-btn')?.classList.toggle('btn-primary', maintenanceScreenMode === 'all');
+    document.getElementById('show-all-tech-screens-btn')?.classList.toggle('btn-outline', maintenanceScreenMode !== 'all');
+    const title = document.getElementById('tech-dashboard-title');
+    const description = document.getElementById('tech-dashboard-description');
+    if (title) title.textContent = maintenanceScreenMode === 'maintenance' ? '🛠️ إدارة الصيانة' : '🗂️ إدارة باقي الشاشات الفنية';
+    if (description) description.textContent = maintenanceScreenMode === 'maintenance'
+        ? 'تظهر هنا أعطال صيانة الكهرباء (3، 12) وصيانة الماكينات (1، 2، 18) وصيانة المرافق (4) فقط.'
+        : 'تظهر هنا جميع شاشات الأعطال الفنية بنفس وظائفها الحالية، بما فيها شاشات الصيانة.';
+    renderTechDashboard();
+};
+function isDedicatedMaintenanceScreen(screen) {
+    return ['electricity','machines','facilities'].includes(String(screen.id)) ||
+        /صيانة الكهرباء|صيانة الماكينات|صيانة المرافق/.test(String(screen.name || '')) ||
+        (Array.isArray(screen.codes) && screen.codes.map(Number).includes(4));
+}
 function renderTechDashboard(){
     const section=document.getElementById('tech-dashboard-section'); if(!section)return;
+    // أخفِ زر ولوحة سجل الأعطال فقط في إدارة الصيانة، ولا تُخفِ الحاوية الخارجية
+    // لأنها تحتوي أيضًا على لوحة متابعة أوقات الإصلاح والوقت الضائع.
+    const fullLogsButton = document.getElementById('toggle-maintenance-full-logs-btn');
+    const fullLogsPanel = document.getElementById('maintenance-full-logs-panel');
+    if (fullLogsButton) fullLogsButton.style.display = maintenanceScreenMode === 'maintenance' ? 'none' : '';
+    if (fullLogsPanel) fullLogsPanel.style.display = maintenanceScreenMode === 'maintenance' ? 'none' : '';
+    // لوحة أوقات الإصلاح والوقت الضائع تظهر في إدارة الصيانة فقط.
+    const repairTimingWrap = document.getElementById('toggle-repair-timing-dashboard-btn')?.parentElement;
+    if (repairTimingWrap) repairTimingWrap.style.display = maintenanceScreenMode === 'maintenance' ? '' : 'none';
+
     const grid=section.querySelector('[data-tech-dynamic-grid]') || section.querySelector('div[style*="grid-template-columns"]'); if(!grid)return;
     grid.setAttribute('data-tech-dynamic-grid','1');
     const activeFaults=getStoredFaults().filter(f=>f.status==='active'||f.status==='awaiting_leader_receipt');
     grid.innerHTML='';
-    TECH_SCREENS.forEach(sc=>{
+    const visibleScreens = maintenanceScreenMode === 'maintenance'
+        ? [
+            { id: 'electricity', name: '⚡ صيانة الكهرباء', codes: [3, 12] },
+            { id: 'machines', name: '⚙️ صيانة الماكينات', codes: [1, 2, 18] },
+            { id: 'facilities', name: '🏢 صيانة المرافق', codes: [4] }
+          ]
+        : TECH_SCREENS.filter(sc => !isDedicatedMaintenanceScreen(sc) && !(sc.codes || []).map(Number).includes(4));
+    if (!visibleScreens.length) {
+        grid.innerHTML = '<p class="no-data" style="color:#64748b;text-align:center;padding:20px;grid-column:1/-1;">لا توجد شاشات ضمن هذا القسم حاليًا. راجع توزيع الأكواد من لوحة الإدارة.</p>';
+        return;
+    }
+    visibleScreens.forEach(sc=>{
         const box=document.createElement('div'); box.style.cssText='background:#fff;padding:15px;border-radius:8px;border-top:5px solid #64748b;box-shadow:0 2px 4px rgba(0,0,0,0.1);';
         const h=document.createElement('h3'); h.style.cssText='margin-top:0;color:#334155;border-bottom:1px solid #eee;padding-bottom:10px;'; h.textContent=`${sc.name} (${sc.codes.length? 'كود '+sc.codes.join('، ') : 'بدون أكواد'})`; box.appendChild(h);
         const holder=document.createElement('div');
-        const list=activeFaults.filter(f=>faultCodeMatchesScreen(f.faultCode, sc.codes));
+        const list=activeFaults.filter(f=> {
+            const assignedId = f.assignedTechScreenId == null ? '' : String(f.assignedTechScreenId);
+            if (maintenanceScreenMode === 'maintenance') {
+                // عند وجود شاشة مُسند إليها العطل، تظهر فيها وحدها؛ لا نتركه ظاهرًا في شاشة الكود القديمة بعد التحويل.
+                return assignedId ? assignedId === String(sc.id) : faultCodeMatchesScreen(f.faultCode, sc.codes);
+            }
+            // شاشة الأعطال العامة لا تعرض أعطال الصيانة المخصصة لإدارة الصيانة، وبالأخص كود المرافق (4)، حتى لو كان الكود مُضافًا بالخطأ إلى شاشة فنية أخرى.
+            if (assignedId === 'electricity' || assignedId === 'machines' || assignedId === 'facilities') return false;
+            if (faultCodeMatchesScreen(f.faultCode, [4])) return false;
+            if (assignedId) return assignedId === String(sc.id);
+            return faultCodeMatchesScreen(f.faultCode, sc.codes) && !isDedicatedMaintenanceScreen(sc);
+        });
         holder.innerHTML=list.length?list.map(f=>createTechFaultCardHTML(f)).join(''):'<p class="no-data" style="color:#64748b;font-size:13px;">لا توجد أعطال حالياً.</p>';
         box.appendChild(holder); grid.appendChild(box);
     });
@@ -423,10 +652,13 @@ function renderTechDashboard(){
 function createTechFaultCardHTML(fault){
     const start=fault.startTime?new Date(fault.startTime).toLocaleTimeString('ar-EG'):'-'; const dur=fault.startTime?formatDuration(getFaultDurationSeconds(fault),'seconds'):'0 ثانية';
     const waiting = fault.status === 'awaiting_leader_receipt';
+    const repairStarted = Number.isFinite(Number(fault.repairStartedAt)) && Number(fault.repairStartedAt) > 0;
     const statusHtml = waiting
-        ? `<div style="background:#fef3c7;color:#92400e;border:1px solid #f59e0b;padding:8px;border-radius:6px;font-weight:bold;text-align:center;margin-bottom:10px;">🟡 تم إنهاء العطل — في انتظار استلام قائد الفريق</div>`
-        : `<button class="btn btn-success btn-block" style="width:100%;padding:6px;" onclick="endFault('${fault.id}')">✅ تم الإصلاح وإنهاء العطل</button>`;
-    return `<div class="fault-card" data-fault-id="${fault.id}" style="background:#fff;border:1px solid ${waiting?'#f59e0b':'#cbd5e1'};padding:12px;border-radius:6px;margin-bottom:10px;"><div style="font-weight:bold;color:${waiting?'#92400e':'#dc2626'};margin-bottom:8px;">${waiting?'🟡':'🔴'} ماكينة: ${fault.machineNumber||'غير معروف'}</div><div style="font-size:13px;color:#334155;margin-bottom:10px;"><p style="margin:3px 0;"><strong>المرحلة:</strong> ${fault.machineStage||'-'}</p><p style="margin:3px 0;"><strong>القسم:</strong> ${fault.machineSection||'-'} (${fault.machineZone||'-'})</p><p style="margin:3px 0;"><strong>العطل:</strong> كود ${fault.faultCode||'-'} — ${fault.faultName||'-'}</p><p style="margin:3px 0;"><strong>وقت البداية:</strong> ${start}</p><p style="margin:3px 0;"><strong>مدة التوقف:</strong> <span class="elapsed-time">${dur}</span></p>${waiting&&fault.endTime?`<p style="margin:3px 0;"><strong>وقت إنهاء الفني:</strong> ${new Date(fault.endTime).toLocaleTimeString('ar-EG')}</p>`:''}${fault.notes?`<p style="margin:3px 0;"><strong>ملاحظات:</strong> ${fault.notes}</p>`:''}</div>${statusHtml}</div>`;
+        ? `<div style="background:#fef3c7;color:#92400e;border:1px solid #f59e0b;padding:8px;border-radius:6px;font-weight:bold;text-align:center;margin-bottom:10px;">🟡 تم إنهاء الإصلاح — في انتظار استلام قائد الفريق</div>`
+        : repairStarted
+            ? `<div style="background:#dcfce7;color:#166534;padding:7px;border-radius:6px;margin-bottom:7px;font-weight:bold;">🛠️ بدأ الإصلاح: ${new Date(Number(fault.repairStartedAt)).toLocaleTimeString('ar-EG')} — <span class="repair-elapsed-time" data-repair-fault-id="${fault.id}">${formatDuration((getSynchronizedNow()-Number(fault.repairStartedAt))/1000,'seconds')}</span></div><button class="btn btn-success btn-block" style="width:100%;padding:6px;" onclick="endFault('${fault.id}', true)">✅ تم الإصلاح</button>`
+            : `<button class="btn btn-primary btn-block" style="width:100%;padding:6px;margin-bottom:6px;" onclick="startFaultRepair('${fault.id}')">▶️ بداية الإصلاح</button><button class="btn btn-success btn-block" style="width:100%;padding:6px;" disabled title="ابدأ الإصلاح أولاً">✅ تم الإصلاح</button>`;
+    return `<div class="fault-card" data-fault-id="${fault.id}" style="background:#fff;border:1px solid ${waiting?'#f59e0b':'#cbd5e1'};padding:12px;border-radius:6px;margin-bottom:10px;"><div style="font-weight:bold;color:${waiting?'#92400e':'#dc2626'};margin-bottom:8px;">${waiting?'🟡':'🔴'} ماكينة: ${fault.machineNumber||'غير معروف'}</div><div style="font-size:13px;color:#334155;margin-bottom:10px;"><p style="margin:3px 0;"><strong>المرحلة:</strong> ${fault.machineStage||'-'}</p><p style="margin:3px 0;"><strong>القسم:</strong> ${fault.machineSection||'-'} (${fault.machineZone||'-'})</p><p style="margin:3px 0;"><strong>العطل:</strong> كود ${fault.faultCode||'-'} — ${fault.faultName||'-'}</p><p style="margin:3px 0;"><strong>وقت البداية:</strong> ${start}</p><p style="margin:3px 0;"><strong>مدة التوقف:</strong> <span class="elapsed-time">${dur}</span></p>${waiting&&fault.endTime?`<p style="margin:3px 0;"><strong>وقت إنهاء الفني:</strong> ${new Date(fault.endTime).toLocaleTimeString('ar-EG')}</p>`:''}${fault.notes?`<p style="margin:3px 0;"><strong>ملاحظات:</strong> ${fault.notes}</p>`:''}${fault.technicianName?`<p style="margin:3px 0;"><strong>الفني المسؤول:</strong> ${escapeStaffText(fault.technicianName)}</p>`:''}${fault.technicianComment?`<p style="margin:3px 0;"><strong>تعليق الفني:</strong> ${escapeStaffText(fault.technicianComment)}</p>`:''}${fault.faultTransferNote?`<p style="margin:3px 0;color:#7c3aed;"><strong>التحويل:</strong> ${escapeStaffText(fault.faultTransferNote)}</p>`:''}</div>${!waiting?`<div style="display:grid;gap:6px;margin-bottom:10px;"><label>الفني الذي يتولى الإصلاح</label><select id="tech-name-${fault.id}" class="form-control"><option value="">-- اختر اسم الفني --</option>${maintenanceStaffSettings.technicians.map(n=>`<option value="${escapeStaffText(n)}" ${fault.technicianName===n?'selected':''}>${escapeStaffText(n)}</option>`).join('')}</select><textarea id="tech-comment-${fault.id}" class="form-control" rows="2" placeholder="اكتب تعليق الفني على العطل أو ما تم فحصه">${escapeStaffText(fault.technicianComment||'')}</textarea><button class="btn btn-outline" onclick="saveTechnicianComment('${fault.id}')">💬 حفظ اسم الفني والتعليق</button><label>تحويل العطل إلى شاشة أخرى</label><div style="display:flex;gap:6px;"><select id="transfer-screen-${fault.id}" class="form-control" style="flex:1;"><option value="">-- اختر القسم الصحيح --</option>${getTransferDestinationOptions().map(sc=>`<option value="${escapeStaffText(sc.id)}">${escapeStaffText(sc.name)}</option>`).join('')}</select><button class="btn btn-secondary" onclick="transferFaultToScreen('${fault.id}')">🔁 تحويل</button></div></div>`:''}${statusHtml}</div>`;
 }
 
 function renderTeamLeaderDashboard(){
@@ -440,7 +672,7 @@ function renderTeamLeaderDashboard(){
     container.innerHTML=pending.map(f=>{
         const start=f.startTime?new Date(f.startTime).toLocaleTimeString('ar-EG'):'-';
         const dur=formatDuration(getFaultDurationSeconds(f),'seconds');
-        return `<div class="fault-card" data-fault-id="${f.id}" style="background:#fff;border:2px solid #f59e0b;padding:14px;border-radius:8px;margin-bottom:12px;"><div style="font-weight:bold;color:#92400e;font-size:16px;margin-bottom:10px;">🟡 ماكينة جاهزة للاستلام: ${f.machineNumber||'غير معروف'}</div><div style="font-size:13px;color:#334155;margin-bottom:12px;"><p style="margin:4px 0;"><strong>المرحلة:</strong> ${f.machineStage||'-'}</p><p style="margin:4px 0;"><strong>القسم:</strong> ${f.machineSection||'-'} (${f.machineZone||'-'})</p><p style="margin:4px 0;"><strong>العطل:</strong> كود ${f.faultCode||'-'} — ${f.faultName||'-'}</p><p style="margin:4px 0;"><strong>بداية العطل:</strong> ${start}</p><p style="margin:4px 0;"><strong>إجمالي مدة التوقف:</strong> <span class="elapsed-time">${dur}</span></p>${f.notes?`<p style="margin:4px 0;"><strong>ملاحظات:</strong> ${f.notes}</p>`:''}</div><button class="btn btn-success btn-block" style="width:100%;padding:9px;font-weight:bold;" onclick="receiveMachineByTeamLeader('${f.id}')">✅ تم استلام الماكينة من الفني</button></div>`;
+        return `<div class="fault-card" data-fault-id="${f.id}" style="background:#fff;border:2px solid #f59e0b;padding:14px;border-radius:8px;margin-bottom:12px;"><div style="font-weight:bold;color:#92400e;font-size:16px;margin-bottom:10px;">🟡 ماكينة جاهزة للاستلام: ${f.machineNumber||'غير معروف'}</div><div style="font-size:13px;color:#334155;margin-bottom:12px;"><p style="margin:4px 0;"><strong>المرحلة:</strong> ${f.machineStage||'-'}</p><p style="margin:4px 0;"><strong>القسم:</strong> ${f.machineSection||'-'} (${f.machineZone||'-'})</p><p style="margin:4px 0;"><strong>العطل:</strong> كود ${f.faultCode||'-'} — ${f.faultName||'-'}</p><p style="margin:4px 0;"><strong>بداية العطل:</strong> ${start}</p><p style="margin:4px 0;"><strong>إجمالي مدة التوقف:</strong> <span class="elapsed-time">${dur}</span></p>${f.notes?`<p style="margin:4px 0;"><strong>ملاحظات:</strong> ${f.notes}</p>`:''}${f.technicianName?`<p style="margin:4px 0;"><strong>الفني الذي أصلح:</strong> ${escapeStaffText(f.technicianName)}</p>`:''}${f.technicianComment?`<p style="margin:4px 0;"><strong>تعليق الفني:</strong> ${escapeStaffText(f.technicianComment)}</p>`:''}</div><label style="display:block;margin-bottom:6px;">اسم قائد الفريق المستلم</label><select id="leader-name-${f.id}" class="form-control" style="width:100%;margin-bottom:8px;"><option value="">-- اختر اسم قائد الفريق --</option>${maintenanceStaffSettings.leaders.map(n=>`<option value="${escapeStaffText(n)}">${escapeStaffText(n)}</option>`).join('')}</select><button class="btn btn-success btn-block" style="width:100%;padding:9px;font-weight:bold;" onclick="receiveMachineByTeamLeader('${f.id}')">✅ تم استلام الماكينة من الفني</button></div>`;
     }).join('');
 }
 
@@ -454,13 +686,21 @@ window.receiveMachineByTeamLeader=async function(faultId){
     }
     // هنا فقط يتوقف العداد وتُثبت المدة النهائية للعطل.
     // لا يتم تسجيل اسم قائد الفريق أو وقت استلامه.
+    const leaderSelect=document.getElementById('leader-name-'+fault.id);
+    const selectedLeader=leaderSelect?.value||'';
+    if (maintenanceStaffSettings.leaders.length && !selectedLeader) { alert('اختر اسم قائد الفريق الذي استلم الماكينة.'); return; }
     const receiptTime = getSynchronizedNow();
     fault.endTime = receiptTime;
     fault.durationSeconds = Number.isFinite(Number(fault.startTime))
         ? Math.max(0, (receiptTime - Number(fault.startTime)) / 1000)
         : Math.max(0, Number(fault.durationSeconds) || 0);
     fault.durationMinutes = fault.durationSeconds / 60;
-    fault.receivedBy='قائد الفريق';
+    fault.receivedBy=selectedLeader || 'قائد الفريق';
+    fault.leaderName=selectedLeader || 'قائد الفريق';
+    fault.leaderReceivedAt=receiptTime;
+    fault.safetyProcedure = fault.permitRequirement === 'required'
+        ? 'تم العمل بتصريح أمن صناعي متوفر ومعتمد'
+        : 'لا يتطلب تصريح أمن صناعي';
     fault.status='finished';
     try {
         await saveFaultStateFast(fault);
@@ -471,7 +711,7 @@ window.receiveMachineByTeamLeader=async function(faultId){
     renderTechDashboard();
     renderTeamLeaderDashboard();
     // الصوت يظل مربوطًا بانتقال الحالة إلى finished عبر مراقب Firebase.
-    alert(`✅ تم استلام الماكينة ${fault.machineNumber||''} من الفني وتسجيلها كمغلقة نهائياً.`);
+    alert(`✅ تم استلام الماكينة ${fault.machineNumber||''} بواسطة ${fault.leaderName} وتسجيلها كمغلقة نهائياً.`);
 };
 
 let faultCodesSyncReady = false;
@@ -1010,39 +1250,43 @@ function monitorFaultAlerts(nextFaults) {
     const list = Array.isArray(nextFaults) ? nextFaults : [];
     const nextState = new Map();
     list.forEach(f => {
-        if (f && f.id != null) nextState.set(String(f.id), f.status || '');
+        if (f && f.id != null) nextState.set(String(f.id), { status: f.status || '', code: Number(f.faultCode ?? f.code) });
     });
 
-    // أول تحميل = تأسيس الحالة فقط، بدون تشغيل جرس للأعطال القديمة.
+    // أول تحميل = تأسيس الحالة فقط، بدون تشغيل صوت للأعطال القديمة.
     if (!faultAlertBaselineReady) {
         faultAlertStateById = nextState;
         faultAlertBaselineReady = true;
         return;
     }
 
-    // التنبيه الصوتي مخصص للوحة الفنيين فقط.
-    // المزامنة والبيانات تظل فورية على كل الأجهزة، لكن تشغيل الصوت لا يتم
-    // إلا عندما تكون الصفحة الحالية مفتوحة على لوحة الفنيين.
-    const isTechnicianBoard = document.body.classList.contains('factory5-role-tech');
-    let newFaultDetected = false;
-    let leaderReceiptDetected = false;
+    const isTechnicianBoard = document.body.classList.contains('factory5-role-tech') || document.body.classList.contains('factory5-role-faultScreens');
+    const isMaintenanceView = activeTechnicianView === 'tech';
+    let shouldPlayNewFault = false;
+    let shouldPlayLeaderReceipt = false;
+    const maintenanceCodes = new Set([1, 2, 3, 4, 12, 18]);
 
-    nextState.forEach((status, id) => {
-        const previousStatus = faultAlertStateById.get(id);
-        if (status === 'active' && previousStatus !== 'active' && previousStatus !== 'awaiting_leader_receipt') {
-            newFaultDetected = true;
+    nextState.forEach((current, id) => {
+        const previous = faultAlertStateById.get(id);
+        const previousStatus = typeof previous === 'object' ? previous.status : previous;
+        const code = Number(current.code);
+        const isOneOfMaintenanceFaults = maintenanceCodes.has(code) || maintenanceCodes.has(resolveFaultCodeForScreen(code));
+        // في إدارة الصيانة صوت للأكواد الستة المطلوبة فقط. في شاشة الأعطال العامة
+        // الأكواد نفسها صامتة، وبقية الأكواد لها صوت.
+        const soundAllowed = isMaintenanceView ? isOneOfMaintenanceFaults : !isOneOfMaintenanceFaults;
+        if (!soundAllowed) return;
+        if (current.status === 'active' && previousStatus !== 'active' && previousStatus !== 'awaiting_leader_receipt') {
+            shouldPlayNewFault = true;
         }
-        if (status === 'finished' && previousStatus === 'awaiting_leader_receipt') {
-            leaderReceiptDetected = true;
+        if (current.status === 'finished' && previousStatus === 'awaiting_leader_receipt') {
+            shouldPlayLeaderReceipt = true;
         }
     });
 
     faultAlertStateById = nextState;
-
-    // لا يوجد أي صوت في العامل أو قائد الفريق أو لوحة الإدارة.
     if (!isTechnicianBoard) return;
-    if (newFaultDetected) playNewFaultAlert();
-    if (leaderReceiptDetected) playLeaderReceiptAlert();
+    if (shouldPlayNewFault) playNewFaultAlert();
+    if (shouldPlayLeaderReceipt) playLeaderReceiptAlert();
 }
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -1054,7 +1298,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (initialTech) initialTech.classList.add("hidden");
     if (initialLeader) initialLeader.classList.add("hidden");
     if (initialAdmin) initialAdmin.classList.add("hidden");
-    document.body.classList.remove("factory5-role-worker", "factory5-role-tech", "factory5-role-leader", "factory5-role-admin", "factory5-role-topManagement");
+    document.body.classList.remove("factory5-role-worker", "factory5-role-tech", "factory5-role-faultScreens", "factory5-role-leader", "factory5-role-admin", "factory5-role-topManagement");
     setupMachinePerformanceFilter();
     setupOperatingTimeSettingsSync();
     setupMachinePerformanceOperatingLiveDisplay();
@@ -1086,7 +1330,8 @@ function setupLiveFaultRefresh() {
             const next = data && typeof data === 'object' ? Object.values(data) : [];
             const signature = JSON.stringify(next.map(f => ({
                 id: f && f.id, status: f && f.status, startTime: f && f.startTime,
-                endTime: f && f.endTime, durationSeconds: f && f.durationSeconds
+                endTime: f && f.endTime, durationSeconds: f && f.durationSeconds,
+                adminTimeEditedAt: f && f.adminTimeEditedAt, adminTimeEdited: f && f.adminTimeEdited
             })).sort((a,b) => String(a.id).localeCompare(String(b.id))));
             if (signature !== liveFaultLastSignature) {
                 liveFaultLastSignature = signature;
@@ -1166,6 +1411,8 @@ function setupRealtimeSync() {
         try { localStorage.setItem('factory5_faults_backup', JSON.stringify(cachedFaults)); } catch (_) {}
         if (faultAlertBaselineReady) monitorFaultAlerts(cachedFaults);
         refreshAllFaultViews();
+        // إعادة رسم سجل الأعطال الكامل في لوحة الإدارة وإدارة الصيانة فور وصول التعديل.
+        updateFullLogsTable();
     });
 
     faultsRef.on('child_removed', snapshot => {
@@ -1420,7 +1667,15 @@ function initClock() {
 }
 
 function updateLiveFaultDurations(nowMs = getSynchronizedNow()) {
+    document.querySelectorAll('[data-repair-fault-id]').forEach(el => {
+        const f = getStoredFaults().find(item => String(item.id) === String(el.getAttribute('data-repair-fault-id')));
+        if (f && f.repairStartedAt) el.textContent = formatDuration((nowMs - Number(f.repairStartedAt)) / 1000, 'seconds');
+    });
     const cards = document.querySelectorAll(".fault-card[data-fault-id]");
+    const repairPanel = document.getElementById('repair-timing-dashboard-panel');
+    if (repairPanel && !repairPanel.classList.contains('hidden')) {
+        try { renderRepairTimingDashboard(); } catch (_) {}
+    }
     cards.forEach(card => {
         const faultId = card.getAttribute("data-fault-id");
         const fault = getStoredFaults().find(f => {
@@ -1462,7 +1717,7 @@ function mergePendingFaultEdits(list) {
     source.forEach(f => { if (f && f.id != null) byId.set(String(f.id), f); });
     pendingFaultEdits.forEach((edited, id) => {
         const current = byId.get(String(id));
-        if (!current || Number(current.startTime) !== Number(edited.startTime) || Number(current.endTime) !== Number(edited.endTime) || String(current.status || '') !== String(edited.status || '')) {
+        if (!current || Number(current.startTime) !== Number(edited.startTime) || Number(current.endTime || 0) !== Number(edited.endTime || 0) || String(current.status || '') !== String(edited.status || '') || Number(current.adminTimeEditedAt || 0) !== Number(edited.adminTimeEditedAt || 0) || Number(current.repairStartedAt || 0) !== Number(edited.repairStartedAt || 0) || JSON.stringify(current.repairSegments || []) !== JSON.stringify(edited.repairSegments || []) || JSON.stringify(current.lostTimeSegments || []) !== JSON.stringify(edited.lostTimeSegments || []) || String(current.assignedTechScreenId || '') !== String(edited.assignedTechScreenId || '')) {
             byId.set(String(id), edited);
         } else {
             // Firebase أصبح مطابقًا للتعديل؛ لا نحتاج للحفاظ على النسخة المؤقتة.
@@ -1658,6 +1913,12 @@ const PROTECTED_VIEW_CONFIG = {
         password: "130150",
         sessionKey: "factory5_maintenance_authenticated"
     },
+    faultScreens: {
+        title: "تسجيل دخول شاشة الأعطال",
+        description: "أدخل كلمة المرور الخاصة بشاشة الأعطال لعرض جميع الشاشات الفنية:",
+        password: "120160",
+        sessionKey: "factory5_fault_screens_authenticated"
+    },
     leader: {
         title: "تسجيل دخول قائد الفريق",
         description: "أدخل كلمة المرور الخاصة بشاشة قائد الفريق:",
@@ -1679,12 +1940,14 @@ const PROTECTED_VIEW_CONFIG = {
 };
 
 let pendingProtectedView = null;
+let activeTechnicianView = 'tech';
 
 function restoreAdminStateOnLoad() {
     // الأمان والتنظيم: كل فتح للرابط يبدأ من شاشة الدخول الرئيسية.
     // لا نعيد فتح أي واجهة محمية تلقائياً حتى لو كانت جلسة سابقة موجودة.
     sessionStorage.removeItem("factory5_admin_authenticated");
     sessionStorage.removeItem(PROTECTED_VIEW_CONFIG.tech.sessionKey);
+    sessionStorage.removeItem(PROTECTED_VIEW_CONFIG.faultScreens.sessionKey);
     sessionStorage.removeItem(PROTECTED_VIEW_CONFIG.leader.sessionKey);
     sessionStorage.removeItem(PROTECTED_VIEW_CONFIG.topManagement.sessionKey);
 
@@ -1698,7 +1961,7 @@ function restoreAdminStateOnLoad() {
 
 
 function showFactory5Role(role) {
-    document.body.classList.remove("factory5-role-worker", "factory5-role-tech", "factory5-role-leader", "factory5-role-admin", "factory5-role-topManagement");
+    document.body.classList.remove("factory5-role-worker", "factory5-role-tech", "factory5-role-faultScreens", "factory5-role-leader", "factory5-role-admin", "factory5-role-topManagement");
     document.body.classList.add(`factory5-role-${role}`);
     const adminPanel = document.getElementById("admin-panel");
     if (adminPanel && role !== "admin" && role !== "topManagement") adminPanel.classList.add("hidden");
@@ -1783,6 +2046,7 @@ function setupEventListeners() {
         if (initialSelectedRole === "worker") {
             sessionStorage.removeItem("factory5_admin_authenticated");
             sessionStorage.removeItem(PROTECTED_VIEW_CONFIG.tech.sessionKey);
+            sessionStorage.removeItem(PROTECTED_VIEW_CONFIG.faultScreens.sessionKey);
             sessionStorage.removeItem(PROTECTED_VIEW_CONFIG.leader.sessionKey);
             sessionStorage.removeItem(PROTECTED_VIEW_CONFIG.topManagement.sessionKey);
             if (initialLoginPage) initialLoginPage.classList.add("hidden");
@@ -1892,8 +2156,9 @@ function setupEventListeners() {
     const workerActiveFaultsSection = document.getElementById("worker-active-faults-section");
 
     function setActiveView(view) {
+        activeTechnicianView = view === "faultScreens" ? "faultScreens" : "tech";
         const isWorker = view === "worker";
-        const isTech = view === "tech";
+        const isTech = view === "tech" || view === "faultScreens";
         const isLeader = view === "leader";
 
         showFactory5Role(view);
@@ -1922,6 +2187,13 @@ function setupEventListeners() {
         if (teamLeaderDashboardSection) teamLeaderDashboardSection.classList.toggle("hidden", !isLeader);
 
         if (isTech) {
+            const screenSwitcher = document.querySelector(".maintenance-screen-switcher");
+            if (screenSwitcher) screenSwitcher.classList.toggle("hidden", view !== "faultScreens");
+            setMaintenanceScreenMode(view === "faultScreens" ? "all" : "maintenance");
+            const dashTitle = document.getElementById("tech-dashboard-title");
+            const logoutBtn = document.getElementById("logout-maintenance-btn");
+            if (dashTitle) dashTitle.textContent = view === "faultScreens" ? "🗂️ شاشة الأعطال — جميع الشاشات الفنية" : "🛠️ إدارة الصيانة";
+            if (logoutBtn) logoutBtn.textContent = view === "faultScreens" ? "🚪 خروج شاشة الأعطال" : "🚪 خروج إدارة الصيانة";
             armTechnicianAlerts();
             loadFaultsFromStorage();
             renderTechDashboard();
@@ -1931,7 +2203,7 @@ function setupEventListeners() {
     }
 
     function returnToInitialLogin() {
-        document.body.classList.remove("factory5-role-worker", "factory5-role-tech", "factory5-role-leader", "factory5-role-admin", "factory5-role-topManagement");
+        document.body.classList.remove("factory5-role-worker", "factory5-role-tech", "factory5-role-faultScreens", "factory5-role-leader", "factory5-role-admin", "factory5-role-topManagement");
         const adminPanel = document.getElementById("admin-panel");
         if (adminPanel) adminPanel.classList.add("hidden");
         const initialLogin = document.getElementById("initial-login-page");
@@ -1968,7 +2240,7 @@ function setupEventListeners() {
     }
 
     if (switchTechView) {
-        switchTechView.addEventListener("click", () => openProtectedLogin("tech"));
+        switchTechView.addEventListener("click", () => openProtectedLogin("faultScreens"));
     }
 
     if (switchLeaderView) {
@@ -2024,11 +2296,12 @@ function setupEventListeners() {
         });
     }
 
-    // تسجيل الخروج من إدارة الصيانة أو شاشة قائد الفريق.
+    // تسجيل الخروج من إدارة الصيانة أو شاشة الأعطال أو شاشة قائد الفريق.
     const logoutMaintenanceBtn = document.getElementById("logout-maintenance-btn");
     if (logoutMaintenanceBtn) {
         logoutMaintenanceBtn.addEventListener("click", () => {
             sessionStorage.removeItem(PROTECTED_VIEW_CONFIG.tech.sessionKey);
+            sessionStorage.removeItem(PROTECTED_VIEW_CONFIG.faultScreens.sessionKey);
             returnToInitialLogin();
         });
     }
@@ -2648,6 +2921,16 @@ function startFaultRecord() {
         return;
     }
     const notes = document.getElementById("fault-notes")?.value.trim() || "";
+    const permitRequirement = document.getElementById('fault-permit-requirement')?.value || 'not_required';
+    const permitStatus = document.getElementById('fault-permit-status')?.value || '';
+    if (permitRequirement === 'required' && permitStatus !== 'available') {
+        if (permitStatus === 'missing') {
+            alert('هذا العطل يتطلب تصريح أمن صناعي. لا يمكن بدء العمل قبل إصدار التصريح واعتماده.');
+        } else {
+            alert('حدد حالة تصريح الأمن الصناعي. إذا كان العطل يتطلب تصريحًا، يجب تأكيد أن التصريح متوفر ومعتمد قبل بدء العمل.');
+        }
+        return;
+    }
 
     startingFaultNow = true;
     const newFault = {
@@ -2663,6 +2946,9 @@ function startFaultRecord() {
         durationMinutes: 0,
         durationSeconds: 0,
         notes: notes,
+        permitRequirement: permitRequirement,
+        permitStatus: permitRequirement === 'required' ? 'available' : 'not_required',
+        safetyProcedure: permitRequirement === 'required' ? 'تم العمل بتصريح أمن صناعي متوفر ومعتمد' : 'لا يتطلب تصريح أمن صناعي',
         status: "active"
     };
 
@@ -2682,6 +2968,12 @@ function startFaultRecord() {
     if (machineCard) machineCard.classList.add("hidden");
     if (faultSelect) faultSelect.value = "";
     if (notesInput) notesInput.value = "";
+    const permitRequirementInput = document.getElementById('fault-permit-requirement');
+    const permitStatusInput = document.getElementById('fault-permit-status');
+    const permitStatusWrap = document.getElementById('fault-permit-status-wrap');
+    if (permitRequirementInput) permitRequirementInput.value = 'not_required';
+    if (permitStatusInput) permitStatusInput.value = '';
+    if (permitStatusWrap) permitStatusWrap.classList.add('hidden');
     selectedMachine = null;
     startingFaultNow = false;
 
@@ -2743,7 +3035,7 @@ function loadFaultsFromStorage() {
 
 let finishingFaultIds = new Set();
 
-window.endFault = async function(faultId) {
+window.endFault = async function(faultId, fromMaintenanceTech = false) {
     const key = String(faultId);
     // منع الضغط المتكرر على زر "تم الإصلاح"؛ أول ضغطة فقط تنهي خطوة الفني.
     if (finishingFaultIds.has(key)) return;
@@ -2753,11 +3045,34 @@ window.endFault = async function(faultId) {
         loadFaultsFromStorage();
         return;
     }
+    if (fromMaintenanceTech && (!Number.isFinite(Number(fault.repairStartedAt)) || Number(fault.repairStartedAt) <= 0)) {
+        alert('اضغط «بداية الإصلاح» أولاً حتى يتم تسجيل مدة الإصلاح بدقة.');
+        return;
+    }
+    const technicianSelect = document.getElementById('tech-name-' + fault.id);
+    const technicianCommentInput = document.getElementById('tech-comment-' + fault.id);
+    const selectedTechnician = technicianSelect?.value || fault.technicianName || '';
+    if (maintenanceStaffSettings.technicians.length && !selectedTechnician) {
+        alert('اختر اسم الفني الذي أصلح الماكينة أولاً.');
+        return;
+    }
+    if (selectedTechnician) fault.technicianName = selectedTechnician;
+    if (technicianCommentInput && technicianCommentInput.value.trim()) fault.technicianComment = technicianCommentInput.value.trim();
     finishingFaultIds.add(key);
-    // الفني/العامل يضغط "انتهاء العطل" فقط؛ العطل ينتقل لقائد الفريق،
-    // ويستمر عداد التوقف حتى يضغط قائد الفريق على الاستلام فعليًا.
+    if (Number.isFinite(Number(fault.repairStartedAt)) && Number(fault.repairStartedAt) > 0) {
+        const repairEndAt = getSynchronizedNow();
+        fault.repairSegments = Array.isArray(fault.repairSegments) ? fault.repairSegments : [];
+        fault.repairEvents = Array.isArray(fault.repairEvents) ? fault.repairEvents : [];
+        const repairStartAt = Number(fault.repairStartedAt);
+        const repairSeconds = Math.max(0, (repairEndAt - repairStartAt) / 1000);
+        fault.repairSegments.push({ screenId: fault.repairStartedScreenId || fault.assignedTechScreenId || null, screenName: fault.repairStartedScreenName || TECH_SCREENS.find(x => String(x.id) === String(fault.assignedTechScreenId))?.name || 'القسم الفني', technicianName: fault.repairStartedBy || fault.technicianName || 'فني غير محدد', startedAt: repairStartAt, endedAt: repairEndAt, durationSeconds: repairSeconds, endReason: 'تم الإصلاح' });
+        fault.totalRepairSeconds = (Number(fault.totalRepairSeconds) || 0) + repairSeconds;
+        fault.repairEvents.push({ type: 'repair_finished', at: repairEndAt, technicianName: fault.repairStartedBy || fault.technicianName || '', screenName: fault.repairStartedScreenName || 'القسم الفني' });
+        fault.repairStartedAt = null; fault.repairStartedBy = ''; fault.repairStartedScreenId = null; fault.repairStartedScreenName = '';
+        fault.repairEndedAt = repairEndAt;
+    }
+    // إجمالي توقف الماكينة يستمر حتى استلام قائد الفريق، كما كان في النظام الأصلي.
     fault.status = "awaiting_leader_receipt";
-    // لا نثبت endTime إلا عند استلام قائد الفريق.
     try {
         await saveFaultStateFast(fault);
         loadFaultsFromStorage();
@@ -4417,6 +4732,8 @@ window.editFaultTimes = function(faultId) {
 
             // تحديث فوري لكل الشاشات من نفس سجل الأعطال الموحد.
             refreshAllFaultViews();
+            // نحدّث الجدولين صراحة: سجل لوحة الإدارة وسجل إدارة الصيانة.
+            updateFullLogsTable();
 
             // تحقق أخير من Firebase؛ إذا اختلفت القيمة لأي سبب نستخدم القيمة
             // المحفوظة فعليًا بدل الاعتماد على نسخة قديمة في الذاكرة.
@@ -4431,6 +4748,7 @@ window.editFaultTimes = function(faultId) {
                 }
                 // اجعل النسخة التي تستخدمها كل الشاشات هي النسخة المقروءة فعليًا من Firebase.
                 applyFirebaseFaultSnapshot(data);
+                updateFullLogsTable();
             }
 
             modalClose();
@@ -4446,48 +4764,72 @@ window.editFaultTimes = function(faultId) {
     };
 };
 
+function renderRepairTimingDashboard() {
+    const tbody = document.querySelector('#repair-timing-dashboard-table tbody');
+    if (!tbody) return;
+    const faults = getStoredFaults().filter(f => (Array.isArray(f.repairSegments) && f.repairSegments.length) || (Array.isArray(f.lostTimeSegments) && f.lostTimeSegments.length) || f.repairStartedAt || f.waitingSinceTransferAt);
+    const esc = value => String(value ?? '-').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#039;');
+    const fmtTime = value => Number.isFinite(Number(value)) && Number(value) > 0 ? new Date(Number(value)).toLocaleString('ar-EG') : '-';
+    const rows = [];
+    const now = getSynchronizedNow();
+    faults.forEach(f => {
+        const machine = esc(f.machineNumber || 'غير معروف');
+        const faultName = `كود ${esc(f.faultCode || '-')} — ${esc(f.faultName || '-')}`;
+        (Array.isArray(f.repairSegments) ? f.repairSegments : []).forEach(seg => rows.push({ machine, faultName, type:'مدة إصلاح', screen:seg.screenName || '-', tech:seg.technicianName || '-', from:fmtTime(seg.startedAt), to:fmtTime(seg.endedAt), seconds:Number(seg.durationSeconds) || Math.max(0,(Number(seg.endedAt)-Number(seg.startedAt))/1000) }));
+        (Array.isArray(f.lostTimeSegments) ? f.lostTimeSegments : []).forEach(seg => rows.push({ machine, faultName, type:'وقت ضائع بين التحويل وبداية الإصلاح', screen:`${seg.fromScreenName || '-'} ← ${seg.toScreenName || '-'}`, tech:'-', from:fmtTime(seg.from), to:fmtTime(seg.to), seconds:Number(seg.seconds) || Math.max(0,(Number(seg.to)-Number(seg.from))/1000) }));
+        if (f.repairStartedAt) rows.push({ machine, faultName, type:'مدة إصلاح (جارية)', screen:f.repairStartedScreenName || '-', tech:f.repairStartedBy || f.technicianName || '-', from:fmtTime(f.repairStartedAt), to:'جاري الإصلاح', seconds:Math.max(0,(now-Number(f.repairStartedAt))/1000) });
+        if (f.waitingSinceTransferAt) rows.push({ machine, faultName, type:'وقت ضائع (انتظار القسم المستلم)', screen:`انتظار ${f.waitingFromScreenName || 'القسم التالي'}`, tech:'-', from:fmtTime(f.waitingSinceTransferAt), to:'بانتظار بداية الإصلاح', seconds:Math.max(0,(now-Number(f.waitingSinceTransferAt))/1000) });
+    });
+    if (!rows.length) { tbody.innerHTML='<tr><td colspan="8" class="no-data">لا توجد مراحل إصلاح مسجلة حتى الآن.</td></tr>'; return; }
+    rows.sort((a,b) => String(a.from).localeCompare(String(b.from)));
+    tbody.innerHTML = rows.map(r => `<tr><td>${r.machine}</td><td>${r.faultName}</td><td>${esc(r.type)}</td><td>${esc(r.screen)}</td><td>${esc(r.tech)}</td><td>${esc(r.from)}</td><td>${esc(r.to)}</td><td>${formatDuration(r.seconds,'seconds')}</td></tr>`).join('');
+}
+
 function updateFullLogsTable() {
     const faults = getStoredFaults();
-    const tbody = document.querySelector("#full-logs-table tbody");
-    if (!tbody) return;
-    tbody.innerHTML = "";
+    try { renderRepairTimingDashboard(); } catch (_) {}
+    const tbodies = [
+        document.querySelector("#full-logs-table tbody"),
+        document.querySelector("#maintenance-full-logs-table tbody")
+    ].filter(Boolean);
+    if (!tbodies.length) return;
+    const safeText = (value) => String(value ?? '-').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+    const escapeId = (value) => String(value ?? '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
     if (faults.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="12" class="no-data">لا توجد أعطال مسجلة.</td></tr>';
+        tbodies.forEach(tbody => {
+            const readOnly = tbody.closest('#maintenance-full-logs-table') !== null;
+            tbody.innerHTML = `<tr><td colspan="${readOnly ? 14 : 15}" class="no-data">لا توجد أعطال مسجلة.</td></tr>`;
+        });
         return;
     }
-
-    const safeText = (value) => String(value ?? '-')
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#039;');
-
-    faults.forEach(f => {
-        const tr = document.createElement("tr");
+    const rows = faults.map(f => {
         const duration = (f.startTime && f.endTime)
             ? formatDuration(getFaultDurationSeconds(f), "seconds")
             : (f.status === "finished" ? formatDuration(getFaultDurationSeconds(f), "seconds") : "مفتوح");
-        tr.innerHTML = `
-            <td>${f.startTime ? new Date(Number(f.startTime)).toLocaleDateString("ar-EG") : '-'}</td>
-            <td>${safeText(f.machineZone)}</td>
-            <td>${safeText(f.machineSection)}</td>
-            <td>${safeText(f.machineNumber)}</td>
-            <td>${safeText(f.machineStage)}</td>
-            <td>${safeText(f.faultCode)}</td>
-            <td>${safeText(f.faultName)}</td>
+        const safety = f.safetyProcedure || (f.permitRequirement === 'required'
+            ? (f.permitStatus === 'available' ? 'تم العمل بتصريح أمن صناعي متوفر ومعتمد' : 'يتطلب تصريح أمن صناعي')
+            : 'لا يتطلب تصريح أمن صناعي');
+        const id = escapeId(f.id);
+        const commonCells = `<td>${f.startTime ? new Date(Number(f.startTime)).toLocaleDateString("ar-EG") : '-'}</td>
+            <td>${safeText(f.machineZone)}</td><td>${safeText(f.machineSection)}</td><td>${safeText(f.machineNumber)}</td>
+            <td>${safeText(f.machineStage)}</td><td>${safeText(f.faultCode)}</td><td>${safeText(f.faultName)}</td>
             <td>${f.startTime ? new Date(Number(f.startTime)).toLocaleTimeString("ar-EG") : '-'}</td>
             <td>${f.endTime ? new Date(Number(f.endTime)).toLocaleTimeString("ar-EG") : "مفتوح"}</td>
-            <td>${duration}</td>
-            <td>${safeText(f.notes)}</td>
-            <td>
-                <div style="display:flex;gap:5px;flex-wrap:wrap;">
-                    <button class="btn btn-primary" style="padding:4px 8px;font-size:12px;" onclick="editFaultTimes('${String(f.id).replace(/'/g, "\\'")}')">✏️ تعديل الوقت</button>
-                    <button class="btn btn-danger" style="padding:4px 8px;font-size:12px;" onclick="deleteFault('${String(f.id).replace(/'/g, "\\'")}')">🗑 حذف</button>
-                </div>
-            </td>
-        `;
-        tbody.appendChild(tr);
+            <td>${duration}</td><td>${safeText(f.notes)}</td>
+            <td>${safeText(f.leaderName || f.receivedBy || '-')}</td>
+            <td>${safeText(f.technicianName || '-')}</td><td>${safeText(safety)}</td>`;
+        return { id, commonCells };
+    });
+    tbodies.forEach(tbody => {
+        const isMaintenanceReadOnly = tbody.closest('#maintenance-full-logs-table') !== null;
+        if (faults.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="${isMaintenanceReadOnly ? 14 : 15}" class="no-data">لا توجد أعطال مسجلة.</td></tr>`;
+            return;
+        }
+        tbody.innerHTML = rows.map(row => `<tr>${row.commonCells}${isMaintenanceReadOnly ? '' : `<td><div style="display:flex;gap:5px;flex-wrap:wrap;">
+            <button class="btn btn-primary" style="padding:4px 8px;font-size:12px;" onclick="editFaultTimes('${row.id}')">✏️ تعديل الوقت</button>
+            <button class="btn btn-danger" style="padding:4px 8px;font-size:12px;" onclick="deleteFault('${row.id}')">🗑 حذف</button>
+        </div></td>`}</tr>`).join('');
     });
 }
 
@@ -4535,3 +4877,5 @@ function executePrintReport() {
     });
     window.print();
 }
+// تهيئة الإضافات الجديدة دون تغيير مسارات التشغيل الحالية.
+document.addEventListener('DOMContentLoaded', initMaintenanceEnhancements);
