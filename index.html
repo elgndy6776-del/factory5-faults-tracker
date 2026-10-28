@@ -140,10 +140,13 @@
             <p id="tech-dashboard-description" style="text-align: center; color: #475569; margin-bottom: 20px; font-weight: 500;">تظهر هنا أعطال صيانة الكهرباء (3، 12) وصيانة الماكينات (1، 2، 18) وصيانة المرافق (4) فقط.</p>
             
             <div style="background:#f8fafc;border:1px solid #cbd5e1;border-radius:8px;padding:14px;margin-bottom:16px;">
-                <h3 style="margin:0 0 10px;color:#1e293b;">👨‍🔧 إدارة أسماء الفنيين</h3>
-                <div style="display:flex;gap:8px;flex-wrap:wrap;"><input id="maintenance-staff-name" class="form-control" placeholder="اكتب اسم الفني" style="flex:1;min-width:180px;"><button id="add-maintenance-staff-btn" class="btn btn-success" type="button">➕ إضافة فني</button></div>
-                <div id="maintenance-staff-list" style="margin-top:10px;"></div>
-                <small style="color:#64748b;">الأسماء محفوظة ومزامنة بين الأجهزة المتصلة بقاعدة البيانات.</small>
+                <button id="toggle-maintenance-staff-admin-btn" class="btn btn-secondary" type="button" aria-expanded="false" aria-controls="maintenance-staff-admin-panel">👨‍🔧 إدارة أسماء الفنيين (للإدارة فقط)</button>
+                <div id="maintenance-staff-admin-panel" class="hidden" style="margin-top:12px;">
+                    <h3 style="margin:0 0 10px;color:#1e293b;">👨‍🔧 إضافة أسماء الفنيين</h3>
+                    <div style="display:flex;gap:8px;flex-wrap:wrap;"><input id="maintenance-staff-name" class="form-control" placeholder="اكتب اسم الفني" style="flex:1;min-width:180px;"><button id="add-maintenance-staff-btn" class="btn btn-success" type="button">➕ إضافة فني</button></div>
+                    <div id="maintenance-staff-list" style="margin-top:10px;"></div>
+                    <small style="color:#64748b;">إضافة الأسماء متاحة للإدارة فقط. لا يوجد زر لحذف الأسماء من هذه الشاشة.</small>
+                </div>
             </div>
             <!-- وضع العرض يحدد تلقائياً حسب مدخل الدخول: الصيانة فقط أو شاشة الأعطال الكاملة -->
             <div class="maintenance-screen-switcher" style="display:flex;gap:10px;flex-wrap:wrap;margin:12px 0 16px;">
@@ -216,8 +219,8 @@
                         <p style="margin:0 0 12px;color:#64748b;font-size:13px;">يعرض وقت بداية ونهاية إصلاح كل قسم، ومدة الإصلاح لكل فني، والوقت الضائع بين تحويل العطل وبداية الإصلاح في القسم التالي.</p>
                         <div class="table-responsive">
                             <table id="repair-timing-dashboard-table" class="data-table">
-                                <thead><tr><th>الماكينة</th><th>العطل</th><th>نوع الفترة</th><th>القسم / الشاشة</th><th>الفني</th><th>من</th><th>إلى</th><th>المدة</th></tr></thead>
-                                <tbody><tr><td colspan="8" class="no-data">لا توجد مراحل إصلاح مسجلة حتى الآن.</td></tr></tbody>
+                                <thead><tr><th>الماكينة</th><th>العطل</th><th>نوع الفترة</th><th>توزيع الوقت حسب الصيانة</th><th>القسم المنسوب له إجمالي العطل إداريًا</th><th>الفني</th><th>من</th><th>إلى</th><th>المدة</th><th>إجراء</th></tr></thead>
+                                <tbody><tr><td colspan="10" class="no-data">لا توجد مراحل إصلاح مسجلة حتى الآن.</td></tr></tbody>
                             </table>
                         </div>
                     </div>
