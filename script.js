@@ -47,7 +47,7 @@ function applyRestFaultData(data) {
     const signature = JSON.stringify(list.map(f => ({
         id: f && f.id, status: f && f.status, startTime: f && f.startTime,
         endTime: f && f.endTime, durationSeconds: f && f.durationSeconds,
-        assignedTechScreenId: f && f.assignedTechScreenId,
+        assignedTechScreenId: f && f.assignedTechScreenId, repairCompletedScreenId: f && f.repairCompletedScreenId, repairCompletedScreenName: f && f.repairCompletedScreenName,
         repairStartedAt: f && f.repairStartedAt,
         repairSegments: f && f.repairSegments,
         lostTimeSegments: f && f.lostTimeSegments,
@@ -421,7 +421,7 @@ function cleanNameList(list) { return [...new Set((Array.isArray(list) ? list : 
 function renderStaffNameLists() {
     const techList = document.getElementById('maintenance-staff-list');
     const leaderList = document.getElementById('team-leader-name-list');
-    if (techList) techList.innerHTML = maintenanceStaffSettings.technicians.length ? maintenanceStaffSettings.technicians.map((n,i)=>`<span style="display:inline-flex;align-items:center;gap:6px;background:#e0f2fe;padding:5px 9px;border-radius:14px;margin:3px;">${escapeStaffText(n)} <button type="button" onclick="removeStaffName('technicians',${i})" style="border:0;background:transparent;color:#b91c1c;cursor:pointer;">✕</button></span>`).join('') : '<span style="color:#64748b;">لم تتم إضافة فنيين بعد.</span>';
+    if (techList) techList.innerHTML = maintenanceStaffSettings.technicians.length ? maintenanceStaffSettings.technicians.map(n=>`<span style="display:inline-flex;align-items:center;background:#e0f2fe;padding:5px 9px;border-radius:14px;margin:3px;">${escapeStaffText(n)}</span>`).join('') : '<span style="color:#64748b;">لم تتم إضافة فنيين بعد.</span>';
     if (leaderList) leaderList.innerHTML = maintenanceStaffSettings.leaders.length ? maintenanceStaffSettings.leaders.map((n,i)=>`<span style="display:inline-flex;align-items:center;gap:6px;background:#dcfce7;padding:5px 9px;border-radius:14px;margin:3px;">${escapeStaffText(n)} <button type="button" onclick="removeStaffName('leaders',${i})" style="border:0;background:transparent;color:#b91c1c;cursor:pointer;">✕</button></span>`).join('') : '<span style="color:#64748b;">لم تتم إضافة قادة فريق بعد.</span>';
 }
 function escapeStaffText(v) { return String(v).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
@@ -436,8 +436,7 @@ async function saveMaintenanceSettings() {
     renderStaffNameLists(); renderTechDashboard(); renderTeamLeaderDashboard();
 }
 window.removeStaffName = function(kind, index) {
-    if (!['technicians','leaders'].includes(kind)) return;
-    maintenanceStaffSettings[kind].splice(index,1); saveMaintenanceSettings();
+    alert('حذف الأسماء غير متاح من واجهة الفنيين. تواصل مع مسؤول النظام عند الحاجة إلى تعديل إداري.');
 };
 function addStaffName(kind, inputId) {
     const input = document.getElementById(inputId); const name = input?.value.trim();
@@ -481,7 +480,11 @@ const MAINTENANCE_TRANSFER_SUBSECTIONS = [
 ];
 function getFaultCurrentSectionName(fault) {
     if (fault && fault.assignedMaintenanceSubsection) return String(fault.assignedMaintenanceSubsection);
-    return TECH_SCREENS.find(x => String(x.id) === String(fault?.assignedTechScreenId))?.name || 'القسم السابق';
+    const assignedName = TECH_SCREENS.find(x => String(x.id) === String(fault?.assignedTechScreenId))?.name;
+    if (assignedName) return assignedName;
+    const transfers = Array.isArray(fault?.transfers) ? fault.transfers : [];
+    const lastTransfer = transfers.length ? transfers[transfers.length - 1] : null;
+    return lastTransfer?.toScreenName || fault?.assignedTechScreenName || fault?.technicianScreenName || 'غير محدد';
 }
 function getTransferDestinationOptions() {
     return [
@@ -503,7 +506,7 @@ window.startFaultRepair = async function(id) {
     if (Number.isFinite(Number(fault.waitingSinceTransferAt)) && Number(fault.waitingSinceTransferAt) > 0) {
         const lostStart = Number(fault.waitingSinceTransferAt);
         const lostSeconds = Math.max(0, (now - lostStart) / 1000);
-        fault.lostTimeSegments.push({ from: lostStart, to: now, seconds: lostSeconds, fromScreenName: fault.waitingFromTransferFromName || fault.waitingFromScreenName || 'القسم السابق', toScreenName: getFaultCurrentSectionName(fault) });
+        fault.lostTimeSegments.push({ from: lostStart, to: now, seconds: lostSeconds, fromScreenName: fault.waitingFromTransferFromName || 'غير محدد', toScreenName: getFaultCurrentSectionName(fault), reason: 'انتظار بعد التحويل قبل استلام الإصلاح' });
         fault.totalLostTimeSeconds = (Number(fault.totalLostTimeSeconds) || 0) + lostSeconds;
         fault.waitingSinceTransferAt = null;
         fault.waitingFromScreenName = '';
@@ -517,6 +520,39 @@ window.startFaultRepair = async function(id) {
     try { await saveFaultStateFast(fault); renderRepairTimingDashboard(); }
     catch (_) { alert('تعذر مزامنة بداية الإصلاح الآن. حاول مرة أخرى بعد التأكد من الاتصال.'); }
 };
+
+
+// كلمات مرور منفصلة للوحة التوقيتات وإدارة أسماء الفنيين.
+const REPAIR_TIMING_PASSWORD = '140130';
+const MAINTENANCE_STAFF_ADMIN_PASSWORD = '140120';
+function requireMaintenanceAdmin(actionLabel, expectedPassword = REPAIR_TIMING_PASSWORD) {
+    const entered = prompt(`إجراء إداري محمي: ${actionLabel}\nأدخل كلمة المرور:`);
+    if (entered === null) return false;
+    if (entered !== expectedPassword) { alert('كلمة المرور غير صحيحة.'); return false; }
+    return true;
+}
+async function deleteFaultFromTimingDashboard(id) {
+    if (!requireMaintenanceAdmin('حذف عطل من لوحة متابعة الأوقات')) return;
+    const fault = getStoredFaults().find(f => String(f.id) === String(id));
+    if (!fault) { alert('العطل غير موجود.'); return; }
+    if (!confirm(`تأكيد حذف العطل ${fault.machineNumber || ''} — كود ${fault.faultCode || ''}؟\nسيتم حذف سجل العطل بالكامل وليس صف التوقيت فقط.`)) return;
+    try {
+        if (rtdb) {
+            const root = rtdb.ref('factory5_faults');
+            const snap = await root.once('value'); const data = snap.val() || {};
+            for (const key of Object.keys(data)) if (data[key] && String(data[key].id) === String(id)) await root.child(key).remove();
+        } else {
+            const snap = await firebaseRestGet('factory5_faults');
+            if (snap && typeof snap === 'object') {
+                for (const key of Object.keys(snap)) if (snap[key] && String(snap[key].id) === String(id)) await firebaseRestPut(`factory5_faults/${key}`, null);
+            }
+        }
+        cachedFaults = getStoredFaults().filter(f => String(f.id) !== String(id));
+        pendingFaultEdits.delete(String(id));
+        localStorage.setItem('factory5_faults_backup', JSON.stringify(cachedFaults));
+        refreshAllFaultViews(); renderRepairTimingDashboard();
+    } catch (e) { alert('تعذر حذف العطل من قاعدة البيانات. راجع الاتصال والصلاحيات.'); }
+}
 
 window.transferFaultToScreen = async function(id) {
     const fault=getStoredFaults().find(f=>String(f.id)===String(id)); if(!fault || fault.status!=='active')return;
@@ -532,19 +568,28 @@ window.transferFaultToScreen = async function(id) {
     fault.repairSegments = Array.isArray(fault.repairSegments) ? fault.repairSegments : [];
     fault.lostTimeSegments = Array.isArray(fault.lostTimeSegments) ? fault.lostTimeSegments : [];
     fault.repairEvents = Array.isArray(fault.repairEvents) ? fault.repairEvents : [];
-    if (Number.isFinite(Number(fault.repairStartedAt)) && Number(fault.repairStartedAt) > 0) {
-        const repairStart = Number(fault.repairStartedAt);
-        const repairSeconds = Math.max(0, (transferAt - repairStart) / 1000);
-        fault.repairSegments.push({ screenId: fault.repairStartedScreenId || previousScreenId, screenName: fault.repairStartedScreenName || previousScreenName, technicianName: fault.repairStartedBy || fault.technicianName || 'فني غير محدد', startedAt: repairStart, endedAt: transferAt, durationSeconds: repairSeconds, endReason: 'تحويل العطل' });
-        fault.totalRepairSeconds = (Number(fault.totalRepairSeconds) || 0) + repairSeconds;
-        fault.repairEvents.push({ type: 'repair_paused_for_transfer', at: transferAt, technicianName: fault.repairStartedBy || fault.technicianName || '', fromScreenName: fault.repairStartedScreenName || previousScreenName, toScreenName: destinationName });
-        fault.repairStartedAt = null; fault.repairStartedBy = ''; fault.repairStartedScreenId = null; fault.repairStartedScreenName = '';
-        fault.waitingSinceTransferAt = transferAt; fault.waitingFromTransferFromName = previousScreenName; fault.waitingFromScreenName = destinationName;
-    } else if (!Number.isFinite(Number(fault.waitingSinceTransferAt)) || Number(fault.waitingSinceTransferAt) <= 0) {
-        fault.waitingSinceTransferAt = transferAt; fault.waitingFromTransferFromName = previousScreenName; fault.waitingFromScreenName = destinationName;
+    // عند تحويل العطل: كل الزمن الذي قضاه القسم المُحوِّل منذ استلامه وحتى التحويل يُسجل وقتًا ضائعًا لهذا القسم، حتى لو ضغط بداية الإصلاح.
+    const sectionIntervalStart = Number(fault.repairStartedAt || fault.waitingSinceTransferAt || fault.sectionReceivedAt || fault.startTime || fault.createdAt || 0);
+    if (sectionIntervalStart > 0 && transferAt > sectionIntervalStart) {
+        const lostSeconds = (transferAt - sectionIntervalStart) / 1000;
+        fault.lostTimeSegments.push({ from: sectionIntervalStart, to: transferAt, seconds: lostSeconds, fromScreenName: previousScreenName, toScreenName: destinationName, reason: 'وقت ضائع حتى تحويل العطل' });
+        fault.totalLostTimeSeconds = (Number(fault.totalLostTimeSeconds) || 0) + lostSeconds;
     }
+    // لا نعتمد بداية الإصلاح السابقة للقسم المُحوِّل كإصلاح فعلي؛ الإصلاح الفعلي يُحسب للقسم الذي يبدأ الإصلاح وينهيه أخيرًا.
+    fault.repairStartedAt = null; fault.repairStartedBy = ''; fault.repairStartedScreenId = null; fault.repairStartedScreenName = '';
+    fault.waitingSinceTransferAt = transferAt;
+    fault.waitingFromTransferFromName = previousScreenName;
+    fault.waitingFromScreenName = destinationName;
+    fault.sectionReceivedAt = transferAt;
     fault.assignedTechScreenId=screen.id;
     fault.assignedMaintenanceSubsection=destination.subsection || '';
+    // في سجل الإدارة يظهر كود القسم المستلم/الذي سيعالج العطل، مع الاحتفاظ بالكود الأصلي في originalFaultCode.
+    if (fault.originalFaultCode == null) fault.originalFaultCode = fault.faultCode;
+    const destinationCode = Array.isArray(screen.codes) && screen.codes.length ? Number(screen.codes[0]) : null;
+    if (Number.isFinite(destinationCode)) {
+        fault.currentMaintenanceFaultCode = destinationCode;
+        fault.currentMaintenanceFaultName = (FAULT_CODES.find(x => Number(x.code) === destinationCode)?.name) || fault.faultName || '';
+    }
     fault.transfers=Array.isArray(fault.transfers)?fault.transfers:[];
     fault.transfers.push({fromScreenId:previousScreenId,fromScreenName:previousScreenName,toScreenId:screen.id,toScreenName:destinationName,parentScreenName:screen.name,at:transferAt});
     fault.faultTransferNote=`تم التحويل: ${previousScreenName} ← ${destinationName}`;
@@ -564,11 +609,23 @@ function initMaintenanceEnhancements() {
     const repairPanel = document.getElementById('repair-timing-dashboard-panel');
     repairToggle?.addEventListener('click', () => {
         const opening = repairPanel?.classList.contains('hidden');
+        if (opening && !requireMaintenanceAdmin('فتح لوحة متابعة أوقات الإصلاح والوقت الضائع', REPAIR_TIMING_PASSWORD)) return;
         repairPanel?.classList.toggle('hidden', !opening);
         repairToggle.setAttribute('aria-expanded', opening ? 'true' : 'false');
         renderRepairTimingDashboard();
     });
-    document.getElementById('add-maintenance-staff-btn')?.addEventListener('click',()=>addStaffName('technicians','maintenance-staff-name'));
+    const staffAdminToggle = document.getElementById('toggle-maintenance-staff-admin-btn');
+    const staffAdminPanel = document.getElementById('maintenance-staff-admin-panel');
+    staffAdminToggle?.addEventListener('click', () => {
+        const opening = staffAdminPanel?.classList.contains('hidden');
+        if (opening && !requireMaintenanceAdmin('فتح إدارة أسماء الفنيين', MAINTENANCE_STAFF_ADMIN_PASSWORD)) return;
+        staffAdminPanel?.classList.toggle('hidden', !opening);
+        staffAdminToggle.setAttribute('aria-expanded', opening ? 'true' : 'false');
+    });
+    document.getElementById('add-maintenance-staff-btn')?.addEventListener('click',()=>{
+        if (!staffAdminPanel || staffAdminPanel.classList.contains('hidden')) { alert('افتح إدارة أسماء الفنيين بكلمة مرور الإدارة أولاً.'); return; }
+        addStaffName('technicians','maintenance-staff-name');
+    });
     document.getElementById('add-team-leader-btn')?.addEventListener('click',()=>addStaffName('leaders','team-leader-name'));
     document.getElementById('no-industrial-permit-btn')?.addEventListener('click',recordNoIndustrialPermit);
     const permitRequirement = document.getElementById('fault-permit-requirement');
@@ -3068,6 +3125,10 @@ window.endFault = async function(faultId, fromMaintenanceTech = false) {
         fault.repairSegments.push({ screenId: fault.repairStartedScreenId || fault.assignedTechScreenId || null, screenName: fault.repairStartedScreenName || TECH_SCREENS.find(x => String(x.id) === String(fault.assignedTechScreenId))?.name || 'القسم الفني', technicianName: fault.repairStartedBy || fault.technicianName || 'فني غير محدد', startedAt: repairStartAt, endedAt: repairEndAt, durationSeconds: repairSeconds, endReason: 'تم الإصلاح' });
         fault.totalRepairSeconds = (Number(fault.totalRepairSeconds) || 0) + repairSeconds;
         fault.repairEvents.push({ type: 'repair_finished', at: repairEndAt, technicianName: fault.repairStartedBy || fault.technicianName || '', screenName: fault.repairStartedScreenName || 'القسم الفني' });
+        // الإدارة تنسب إجمالي مدة العطل للقسم الذي أنهى الإصلاح فعلياً، مع الاحتفاظ بتفاصيل كل قسم في سجلات المراحل.
+        fault.repairCompletedScreenId = fault.repairStartedScreenId || fault.assignedTechScreenId || null;
+        fault.repairCompletedScreenName = fault.repairStartedScreenName || getFaultCurrentSectionName(fault) || 'القسم الفني';
+        fault.repairCompletedBy = fault.repairStartedBy || fault.technicianName || 'فني غير محدد';
         fault.repairStartedAt = null; fault.repairStartedBy = ''; fault.repairStartedScreenId = null; fault.repairStartedScreenName = '';
         fault.repairEndedAt = repairEndAt;
     }
@@ -4767,22 +4828,60 @@ window.editFaultTimes = function(faultId) {
 function renderRepairTimingDashboard() {
     const tbody = document.querySelector('#repair-timing-dashboard-table tbody');
     if (!tbody) return;
-    const faults = getStoredFaults().filter(f => (Array.isArray(f.repairSegments) && f.repairSegments.length) || (Array.isArray(f.lostTimeSegments) && f.lostTimeSegments.length) || f.repairStartedAt || f.waitingSinceTransferAt);
+    const faults = getStoredFaults().filter(f => (Array.isArray(f.repairSegments) && f.repairSegments.length) || (Array.isArray(f.lostTimeSegments) && f.lostTimeSegments.length) || f.repairStartedAt || f.waitingSinceTransferAt || f.repairEndedAt);
     const esc = value => String(value ?? '-').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#039;');
     const fmtTime = value => Number.isFinite(Number(value)) && Number(value) > 0 ? new Date(Number(value)).toLocaleString('ar-EG') : '-';
     const rows = [];
     const now = getSynchronizedNow();
+    const addGroupedSeconds = (map, name, seconds) => { const key = String(name || 'غير محدد'); map.set(key, (map.get(key) || 0) + Math.max(0, Number(seconds) || 0)); };
+    const groupedText = map => [...map.entries()].filter(([,secs]) => secs > 0).map(([name,secs]) => `${name}: ${formatDuration(secs,'seconds')}`).join('؛ ') || '-';
     faults.forEach(f => {
         const machine = esc(f.machineNumber || 'غير معروف');
-        const faultName = `كود ${esc(f.faultCode || '-')} — ${esc(f.faultName || '-')}`;
-        (Array.isArray(f.repairSegments) ? f.repairSegments : []).forEach(seg => rows.push({ machine, faultName, type:'مدة إصلاح', screen:seg.screenName || '-', tech:seg.technicianName || '-', from:fmtTime(seg.startedAt), to:fmtTime(seg.endedAt), seconds:Number(seg.durationSeconds) || Math.max(0,(Number(seg.endedAt)-Number(seg.startedAt))/1000) }));
-        (Array.isArray(f.lostTimeSegments) ? f.lostTimeSegments : []).forEach(seg => rows.push({ machine, faultName, type:'وقت ضائع بين التحويل وبداية الإصلاح', screen:`${seg.fromScreenName || '-'} ← ${seg.toScreenName || '-'}`, tech:'-', from:fmtTime(seg.from), to:fmtTime(seg.to), seconds:Number(seg.seconds) || Math.max(0,(Number(seg.to)-Number(seg.from))/1000) }));
-        if (f.repairStartedAt) rows.push({ machine, faultName, type:'مدة إصلاح (جارية)', screen:f.repairStartedScreenName || '-', tech:f.repairStartedBy || f.technicianName || '-', from:fmtTime(f.repairStartedAt), to:'جاري الإصلاح', seconds:Math.max(0,(now-Number(f.repairStartedAt))/1000) });
-        if (f.waitingSinceTransferAt) rows.push({ machine, faultName, type:'وقت ضائع (انتظار القسم المستلم)', screen:`انتظار ${f.waitingFromScreenName || 'القسم التالي'}`, tech:'-', from:fmtTime(f.waitingSinceTransferAt), to:'بانتظار بداية الإصلاح', seconds:Math.max(0,(now-Number(f.waitingSinceTransferAt))/1000) });
+        const faultName = `كود ${esc(f.currentMaintenanceFaultCode ?? f.faultCode ?? '-')} — ${esc(f.currentMaintenanceFaultName || f.faultName || '-')}`;
+        const faultStart = Number(f.startTime || f.createdAt || 0);
+        const repairSegments = Array.isArray(f.repairSegments) ? f.repairSegments : [];
+        const lostSegments = Array.isArray(f.lostTimeSegments) ? f.lostTimeSegments : [];
+        const repairStartTimes = repairSegments.map(x => Number(x.startedAt)).filter(x => x > 0);
+        if (Number(f.repairStartedAt) > 0) repairStartTimes.push(Number(f.repairStartedAt));
+        const firstRepairStart = repairStartTimes.length ? Math.min(...repairStartTimes) : 0;
+        let lostSeconds = lostSegments.reduce((sum, seg) => sum + Math.max(0, Number(seg.seconds) || (Number(seg.to) - Number(seg.from)) / 1000), 0);
+        const hasPreRepairLostSegment = lostSegments.some(seg => faultStart > 0 && Number(seg.from) <= faultStart + 1000 && Number(seg.to) > faultStart);
+        if (faultStart > 0 && firstRepairStart > faultStart && !hasPreRepairLostSegment) lostSeconds += (firstRepairStart - faultStart) / 1000;
+        if (Number(f.waitingSinceTransferAt) > 0) lostSeconds += Math.max(0, (now - Number(f.waitingSinceTransferAt)) / 1000);
+        let repairSeconds = repairSegments.reduce((sum, seg) => sum + Math.max(0, Number(seg.durationSeconds) || (Number(seg.endedAt) - Number(seg.startedAt)) / 1000), 0);
+        if (Number(f.repairStartedAt) > 0) repairSeconds += Math.max(0, (now - Number(f.repairStartedAt)) / 1000);
+
+        // تفاصيل الوقت في إدارة الصيانة: وقت ما قبل التحويل يُنسب للقسم الذي كان مسؤولاً وقتها،
+        // والانتظار بعد التحويل يُنسب للقسم المستلم، والإصلاح الفعلي يُنسب للقسم الذي نفّذه.
+        const lostBySection = new Map();
+        lostSegments.forEach(seg => {
+            const isPreTransfer = String(seg.reason || '').includes('قبل التحويل') || String(seg.reason || '').includes('حتى تحويل العطل');
+            const owner = isPreTransfer ? (seg.fromScreenName || 'غير محدد') : (seg.toScreenName || getFaultCurrentSectionName(f) || 'غير محدد');
+            const seconds = Number(seg.seconds) || Math.max(0, (Number(seg.to) - Number(seg.from)) / 1000);
+            addGroupedSeconds(lostBySection, owner, seconds);
+        });
+        if (faultStart > 0 && firstRepairStart > faultStart && !hasPreRepairLostSegment) {
+            const firstSection = repairSegments.length ? (repairSegments[0].screenName || '') : (f.repairStartedScreenName || getFaultCurrentSectionName(f));
+            addGroupedSeconds(lostBySection, firstSection || (Array.isArray(f.transfers) && f.transfers[0]?.fromScreenName) || 'غير محدد', (firstRepairStart - faultStart) / 1000);
+        }
+        if (Number(f.waitingSinceTransferAt) > 0) addGroupedSeconds(lostBySection, getFaultCurrentSectionName(f), (now - Number(f.waitingSinceTransferAt)) / 1000);
+        const repairBySection = new Map();
+        repairSegments.forEach(seg => addGroupedSeconds(repairBySection, seg.screenName || 'غير محدد', Number(seg.durationSeconds) || Math.max(0, (Number(seg.endedAt) - Number(seg.startedAt)) / 1000)));
+        if (Number(f.repairStartedAt) > 0) addGroupedSeconds(repairBySection, f.repairStartedScreenName || getFaultCurrentSectionName(f), (now - Number(f.repairStartedAt)) / 1000);
+
+        const transferNames = Array.isArray(f.transfers) && f.transfers.length ? f.transfers.map(t => `من ${t.fromScreenName || 'غير محدد'} إلى ${t.toScreenName || 'غير محدد'} — ${f.faultName || 'العطل'}`).join('؛ ') : (f.faultTransferNote || '-');
+        const firstLostFrom = faultStart || (lostSegments.length ? Number(lostSegments[0].from) : 0);
+        const lastLostTo = Number(f.waitingSinceTransferAt) > 0 ? now : (lostSegments.length ? Math.max(...lostSegments.map(x => Number(x.to) || 0)) : firstRepairStart);
+        const firstRepair = repairSegments.length ? Math.min(...repairSegments.map(x => Number(x.startedAt) || Infinity)) : Number(f.repairStartedAt) || 0;
+        const lastRepair = Number(f.repairStartedAt) > 0 ? now : (repairSegments.length ? Math.max(...repairSegments.map(x => Number(x.endedAt) || 0)) : 0);
+        const techNames = [...new Set([...repairSegments.map(x => x.technicianName), f.repairStartedBy, f.repairCompletedBy, f.technicianName].filter(Boolean))].join('، ') || '-';
+        const finalOwner = f.repairCompletedScreenName || f.repairStartedScreenName || getFaultCurrentSectionName(f) || '-';
+        rows.push({ id:f.id, machine, faultName, type:'الوقت الضائع (حتى بدء الإصلاح / الانتظار بعد التحويل)', screen:groupedText(lostBySection), adminOwner:finalOwner, tech:'-', from:fmtTime(firstLostFrom), to:fmtTime(lastLostTo), seconds:lostSeconds });
+        rows.push({ id:f.id, machine, faultName, type:'مدة الإصلاح الفعلية (إجمالي)', screen:groupedText(repairBySection), adminOwner:finalOwner, tech:techNames, from:fmtTime(firstRepair), to:fmtTime(lastRepair || f.repairEndedAt), seconds:repairSeconds });
     });
-    if (!rows.length) { tbody.innerHTML='<tr><td colspan="8" class="no-data">لا توجد مراحل إصلاح مسجلة حتى الآن.</td></tr>'; return; }
+    if (!rows.length) { tbody.innerHTML='<tr><td colspan="10" class="no-data">لا توجد مراحل إصلاح مسجلة حتى الآن.</td></tr>'; return; }
     rows.sort((a,b) => String(a.from).localeCompare(String(b.from)));
-    tbody.innerHTML = rows.map(r => `<tr><td>${r.machine}</td><td>${r.faultName}</td><td>${esc(r.type)}</td><td>${esc(r.screen)}</td><td>${esc(r.tech)}</td><td>${esc(r.from)}</td><td>${esc(r.to)}</td><td>${formatDuration(r.seconds,'seconds')}</td></tr>`).join('');
+    tbody.innerHTML = rows.map(r => `<tr><td>${r.machine}</td><td>${r.faultName}</td><td>${esc(r.type)}</td><td>${esc(r.screen)}</td><td>${esc(r.adminOwner)}</td><td>${esc(r.tech)}</td><td>${esc(r.from)}</td><td>${esc(r.to)}</td><td>${formatDuration(r.seconds,'seconds')}</td><td><button type="button" class="btn btn-danger" onclick="deleteFaultFromTimingDashboard('${String(r.id).replace(/'/g, "\\'")}')">🗑️ حذف العطل</button></td></tr>`).join('');
 }
 
 function updateFullLogsTable() {
@@ -4812,7 +4911,7 @@ function updateFullLogsTable() {
         const id = escapeId(f.id);
         const commonCells = `<td>${f.startTime ? new Date(Number(f.startTime)).toLocaleDateString("ar-EG") : '-'}</td>
             <td>${safeText(f.machineZone)}</td><td>${safeText(f.machineSection)}</td><td>${safeText(f.machineNumber)}</td>
-            <td>${safeText(f.machineStage)}</td><td>${safeText(f.faultCode)}</td><td>${safeText(f.faultName)}</td>
+            <td>${safeText(f.machineStage)}</td><td>${safeText(f.currentMaintenanceFaultCode ?? f.faultCode)}</td><td>${safeText(f.currentMaintenanceFaultName || f.faultName)}</td>
             <td>${f.startTime ? new Date(Number(f.startTime)).toLocaleTimeString("ar-EG") : '-'}</td>
             <td>${f.endTime ? new Date(Number(f.endTime)).toLocaleTimeString("ar-EG") : "مفتوح"}</td>
             <td>${duration}</td><td>${safeText(f.notes)}</td>
