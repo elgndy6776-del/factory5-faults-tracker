@@ -1026,3 +1026,25 @@ body.factory5-role-topManagement .top-print-row { display:block; }
     .fault-time-edit-grid { grid-template-columns: 1fr; }
     .fault-time-edit-card { padding: 15px; }
 }
+
+
+/* شاشة الأعطال: إخفاء شريط التنقل بين واجهات العمال والأعطال وقائد الفريق */
+body.factory5-role-faultScreens .view-mode-switcher {
+    display: none !important;
+}
+
+/* شاشة الأعطال المستقلة: عرض الشاشات الفنية فقط دون أدوات إدارة الصيانة أو السجلات */
+body.factory5-role-faultScreens #tech-dashboard-description,
+body.factory5-role-faultScreens #toggle-maintenance-staff-admin-btn,
+body.factory5-role-faultScreens #maintenance-staff-admin-panel,
+body.factory5-role-faultScreens .maintenance-screen-switcher,
+body.factory5-role-faultScreens #toggle-maintenance-full-logs-btn,
+body.factory5-role-faultScreens #maintenance-full-logs-panel,
+body.factory5-role-faultScreens #toggle-repair-timing-dashboard-btn,
+body.factory5-role-faultScreens #repair-timing-dashboard-panel {
+    display: none !important;
+}
+body.factory5-role-faultScreens #tech-dashboard-section > div:has(> #toggle-maintenance-staff-admin-btn),
+body.factory5-role-faultScreens #tech-dashboard-section > div:has(> div > #toggle-maintenance-full-logs-btn) {
+    display: none !important;
+}
