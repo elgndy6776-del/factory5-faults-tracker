@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>نظام متابعة أعطال مصنع 5 - شركة ACROW مصر</title>
-    <link rel="stylesheet" href="style.css?v=20261027-maintenance14">
+    <link rel="stylesheet" href="style.css?v=20261030-faultscreens-clean">
     <!-- مكتبة قراءة باركود QR -->
     <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
     <!-- OCR لقراءة رقم الماكينة المكتوب مباشرة بالكاميرا -->
@@ -137,7 +137,7 @@
         <!-- ================= واجهة شاشات الفنيين المستقلة (تظهر للفنيين فقط) ================= -->
         <section id="tech-dashboard-section" class="hidden">
             <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:10px;"><h2 id="tech-dashboard-title" style="text-align: center; color: #1e293b; margin: 0; flex:1;">🛠️ إدارة الصيانة</h2><button id="logout-maintenance-btn" class="btn btn-danger" style="background:#dc2626;color:#fff;">🚪 خروج إدارة الصيانة</button></div>
-            <p id="tech-dashboard-description" style="text-align: center; color: #475569; margin-bottom: 20px; font-weight: 500;">تظهر هنا أعطال صيانة الكهرباء (3، 12) وصيانة الماكينات (1، 2، 18) وصيانة المرافق (4) فقط.</p>
+            <p id="tech-dashboard-description" style="text-align: center; color: #475569; margin-bottom: 20px; font-weight: 500;">تظهر هنا أعطال صيانة الكهرباء (3، 12)، وصيانة لحام (2)، والصيانة الوقائية (18)، وصيانة ميكانيكا (1)، وصيانة المرافق (4) فقط.</p>
             
             <div style="background:#f8fafc;border:1px solid #cbd5e1;border-radius:8px;padding:14px;margin-bottom:16px;">
                 <button id="toggle-maintenance-staff-admin-btn" class="btn btn-secondary" type="button" aria-expanded="false" aria-controls="maintenance-staff-admin-panel">👨‍🔧 إدارة أسماء الفنيين (للإدارة فقط)</button>
@@ -162,11 +162,7 @@
                     <div id="tech-cat-electricity"></div>
                 </div>
 
-                <!-- 2. شاشة صيانة الماكينات -->
-                <div style="background: #fff; padding: 15px; border-radius: 8px; border-top: 5px solid #3b82f6; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-                    <h3 style="margin-top:0; color: #2563eb; border-bottom: 1px solid #eee; padding-bottom: 10px;">⚙️ صيانة الماكينات (كود 1، 2، 18)</h3>
-                    <div id="tech-cat-machines"></div>
-                </div>
+                <!-- أكواد 1 و2 و18 نُقلت إلى شاشات الصيانة المنفصلة التي يرسمها النظام ديناميكيًا. -->
 
                 <!-- شاشة صيانة المرافق -->
                 <div style="background:#fff;padding:15px;border-radius:8px;border-top:5px solid #0d9488;box-shadow:0 2px 4px rgba(0,0,0,0.1);">
@@ -216,11 +212,11 @@
                     <button id="toggle-repair-timing-dashboard-btn" type="button" class="btn btn-secondary" aria-expanded="false" aria-controls="repair-timing-dashboard-panel">⏱️ لوحة متابعة أوقات الإصلاح والوقت الضائع</button>
                     <div id="repair-timing-dashboard-panel" class="hidden" style="background:#fff;border:1px solid #cbd5e1;border-radius:8px;padding:14px;margin-top:12px;">
                         <h3 style="margin:0 0 8px;color:#1e293b;">⏱️ سجل مراحل الإصلاح والتحويل</h3>
-                        <p style="margin:0 0 12px;color:#64748b;font-size:13px;">يعرض وقت بداية ونهاية إصلاح كل قسم، ومدة الإصلاح لكل فني، والوقت الضائع بين تحويل العطل وبداية الإصلاح في القسم التالي.</p>
+                        <p style="margin:0 0 12px;color:#64748b;font-size:13px;">يعرض كل عطل في صف واحد: الوقت الضائع من تسجيل العامل حتى بداية الإصلاح، ووقت الإصلاح من بدايته حتى تسجيل «تم الإصلاح». الأعطال الأحدث تظهر أولاً.</p>
                         <div class="table-responsive">
                             <table id="repair-timing-dashboard-table" class="data-table">
-                                <thead><tr><th>الماكينة</th><th>العطل</th><th>نوع الفترة</th><th>توزيع الوقت حسب الصيانة</th><th>القسم المنسوب له إجمالي العطل إداريًا</th><th>الفني</th><th>من</th><th>إلى</th><th>المدة</th><th>إجراء</th></tr></thead>
-                                <tbody><tr><td colspan="10" class="no-data">لا توجد مراحل إصلاح مسجلة حتى الآن.</td></tr></tbody>
+                                <thead><tr><th>الماكينة</th><th>العطل</th><th>القسم / آخر تحويل</th><th>الفني الذي أصلح</th><th>بداية العطل</th><th>⏳ الوقت الضائع</th><th>🛠️ وقت الإصلاح</th><th>إجمالي وقت الصيانة</th><th>إجراء</th></tr></thead>
+                                <tbody><tr><td colspan="9" class="no-data">لا توجد أعطال مسجلة في متابعة الصيانة حتى الآن.</td></tr></tbody>
                             </table>
                         </div>
                     </div>
@@ -274,6 +270,7 @@
                 <button class="tab-btn" data-tab="tab-pareto" style="padding: 8px 12px; cursor: pointer;">تحليل Pareto</button>
                 <button class="tab-btn" data-tab="tab-search" style="padding: 8px 12px; cursor: pointer;">بحث متقدم</button>
                 <button class="tab-btn" data-tab="tab-reports" style="padding: 8px 12px; cursor: pointer;">تقارير الطباعة</button>
+                <button class="tab-btn" data-tab="tab-delete-requests" style="padding: 8px 12px; cursor: pointer;">🛡️ طلبات حذف الأعطال</button>
                 <button class="tab-btn" data-tab="tab-logs" style="padding: 8px 12px; cursor: pointer;">سجل الأعطال الكامل</button>
             </div>
 
@@ -767,6 +764,12 @@
                         <button id="print-report-btn" class="btn btn-success btn-block">🖨️ طباعة التقرير المخصص</button>
                     </div>
                 </div>
+            </div>
+
+            <div id="tab-delete-requests" class="tab-pane">
+                <h3>🛡️ طلبات حذف الأعطال — موافقتك مطلوبة</h3>
+                <p style="color:#64748b">لن يُحذف أي عطل عند تقديم الطلب. الحذف النهائي يتم فقط بعد موافقة الإدارة من هذه الشاشة.</p>
+                <div id="fault-delete-requests-list"></div>
             </div>
 
             <!-- 6. سجل الأعطال الكامل -->
